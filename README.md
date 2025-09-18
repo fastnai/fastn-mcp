@@ -1,4 +1,4 @@
-# Unified Context Layer (UCL) MCP Server
+# Unified Context Layer (UCL) MCP Gateway 
 
 Unified Context Layer (UCL) is a multi-tenant Model Context Protocol (MCP) server that enables AI agents, automation platforms, and applications to connect to over 1,000 SaaS tools—such as Slack, Jira, Gmail, Shopify, Notion, and more—via a single standardized /command endpoint. UCL abstracts away SDK sprawl, glue code, and complex authentication flows, allowing developers to orchestrate context-rich, cross-platform integrations without building and maintaining separate connectors for each service.
 
