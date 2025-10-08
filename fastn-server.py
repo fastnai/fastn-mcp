@@ -17,6 +17,7 @@ parser.add_argument("--api_key", help="API key for authentication.")
 parser.add_argument("--space_id", required=True, help="Space ID for the target environment.")
 parser.add_argument("--tenant_id", help="Tenant ID for the target environment.")
 parser.add_argument("--auth_token", help="Auth token for the target environment.")
+parser.add_argument("--agent_id", help="Optional agent ID for filtering tools.")
 args = parser.parse_args()
 
 # Validate arguments
@@ -27,8 +28,8 @@ if not args.api_key and not (args.tenant_id and args.auth_token):
 mcp = FastMCP("fastn")
 
 # API Endpoints
-GET_TOOLS_URL = "https://live.fastn.ai/api/ucl/getTools"
-EXECUTE_TOOL_URL = "https://live.fastn.ai/api/ucl/executeTool"
+GET_TOOLS_URL = "https://qa.fastn.ai/api/ucl/getTools"
+EXECUTE_TOOL_URL = "https://qa.fastn.ai/api/ucl/executeTool"
 
 # Common headers
 HEADERS = {
@@ -37,6 +38,10 @@ HEADERS = {
     "stage": "LIVE",
     "x-fastn-custom-auth": "true"
 }
+
+# Add agent ID to headers if provided
+if args.agent_id:
+    HEADERS["x-fastn-space-agent-id"] = args.agent_id
 
 # Add authentication headers based on provided credentials
 if args.api_key:
