@@ -17,7 +17,7 @@ parser.add_argument("--api_key", help="API key for authentication.")
 parser.add_argument("--space_id", required=True, help="Space ID for the target environment.")
 parser.add_argument("--tenant_id", help="Tenant ID for the target environment.")
 parser.add_argument("--auth_token", help="Auth token for the target environment.")
-parser.add_argument("--agent_id", help="Optional agent ID for filtering tools.")
+parser.add_argument("--agent_id", help="Optional agent ID for filtering tools. If not provided, space_id will be used as agent_id.")
 args = parser.parse_args()
 
 # Validate arguments
@@ -39,9 +39,15 @@ HEADERS = {
     "x-fastn-custom-auth": "true"
 }
 
-# Add agent ID to headers if provided
+# Add agent ID to headers - use space_id as default if agent_id not provided
+agent_id = args.agent_id if args.agent_id else args.space_id
+HEADERS["x-fastn-space-agent-id"] = agent_id
+
+# Log the agent ID being used
 if args.agent_id:
-    HEADERS["x-fastn-space-agent-id"] = args.agent_id
+    logging.info(f"Using provided agent ID: {agent_id}")
+else:
+    logging.info(f"No agent ID provided, using space_id as agent_id: {agent_id}")
 
 # Add authentication headers based on provided credentials
 if args.api_key:
