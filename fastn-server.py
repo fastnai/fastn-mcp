@@ -28,8 +28,8 @@ if not args.api_key and not (args.tenant_id and args.auth_token):
 mcp = FastMCP("fastn")
 
 # API Endpoints
-GET_TOOLS_URL = "https://qa.fastn.ai/api/ucl/getTools"
-EXECUTE_TOOL_URL = "https://qa.fastn.ai/api/ucl/executeTool"
+GET_TOOLS_URL = "https://live.fastn.ai/api/ucl/getTools"
+EXECUTE_TOOL_URL = "https://live.fastn.ai/api/ucl/executeTool"
 
 # Common headers
 HEADERS = {
