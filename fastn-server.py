@@ -28,8 +28,8 @@ if not args.api_key and not (args.tenant_id and args.auth_token):
 mcp = FastMCP("fastn")
 
 # API Endpoints
-GET_TOOLS_URL = "https://live.fastn.ai/api/ucl/getTools"
-EXECUTE_TOOL_URL = "https://live.fastn.ai/api/ucl/executeTool"
+GET_TOOLS_URL = "https://qa.fastn.ai/api/ucl/getTools"
+EXECUTE_TOOL_URL = "https://qa.fastn.ai/api/ucl/executeTool"
 
 # Common headers
 HEADERS = {
@@ -39,15 +39,15 @@ HEADERS = {
     "x-fastn-custom-auth": "true"
 }
 
-# Add agent ID to headers - use space_id as default if agent_id not provided
-agent_id = args.agent_id if args.agent_id else args.space_id
+# Add agent ID to headers - use space_id as default if agent_id not provided, null, or empty
+agent_id = args.agent_id.strip() if args.agent_id and args.agent_id.strip() else args.space_id
 HEADERS["x-fastn-space-agent-id"] = agent_id
 
 # Log the agent ID being used
-if args.agent_id:
+if args.agent_id and args.agent_id.strip():
     logging.info(f"Using provided agent ID: {agent_id}")
 else:
-    logging.info(f"No agent ID provided, using space_id as agent_id: {agent_id}")
+    logging.info(f"No valid agent ID provided (null/empty), using space_id as agent_id: {agent_id}")
 
 # Add authentication headers based on provided credentials
 if args.api_key:
@@ -68,7 +68,8 @@ async def fetch_tools() -> list:
     """Fetch tool definitions from the getTools API endpoint."""
     data = {
         "input": {
-            "spaceId" : args.space_id
+            "spaceId" : args.space_id,
+            "agentId": agent_id
         }
     }
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -76,7 +77,7 @@ async def fetch_tools() -> list:
             response = await client.post(GET_TOOLS_URL, headers=HEADERS, json=data)
             response.raise_for_status()
             tools = response.json()
-            logging.info(f"Fetched {len(tools)} tools.")
+            logging.info(f"Fetched {len(tools)} tools for agent ID: {agent_id}")
             return tools
         except httpx.HTTPStatusError as e:
             logging.error(f"HTTP error: {e.response.status_code} - {e.response.text}")
@@ -88,8 +89,8 @@ async def fetch_tools() -> list:
 
 async def execute_tool(action_id: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
     """Execute a tool by calling the executeTool API."""
-    data = {"input": {"actionId": action_id, "parameters": parameters}}
-    logging.info(f"Executing tool with parameters: {json.dumps(parameters)}")
+    data = {"input": {"actionId": action_id, "parameters": parameters, "agentId": agent_id}}
+    logging.info(f"Executing tool with parameters: {json.dumps(parameters)} and agent ID: {agent_id}")
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
             response = await client.post(EXECUTE_TOOL_URL, headers=HEADERS, json=data)
