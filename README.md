@@ -312,7 +312,7 @@ Server:
   --server-url URL Public URL for OAuth metadata
 
 Mode:
-  --mode {all,ucl} Tool mode for stdio: "all" or "ucl" (discovery only)
+  --mode {agent,ucl} Tool mode for stdio: "agent" (all tools) or "ucl" (discovery only)
   --project ID     Pre-set project ID for stdio
 
 Debug:

@@ -81,9 +81,9 @@ _active_sse_sessions: set[str] = set()
 # ---------------------------------------------------------------------------
 # Server mode — controls which tools are exposed (set once at startup)
 # ---------------------------------------------------------------------------
-# "all"   → all tools (discovery + execution + flows + config)
+# "agent" → all tools (discovery + execution + flows + config)
 # "ucl"   → discovery + execution tools only
-_server_mode: str = "all"
+_server_mode: str = "agent"
 _server_project_id: str | None = None
 
 UCL_TOOL_NAMES = {"find_tools", "execute_action", "discover_tools", "list_projects"}
@@ -97,14 +97,14 @@ _UCL_PATH_RE = _re.compile(r"^/ucl(?:/([a-f0-9-]{36}))?$")
 def _parse_mode_from_path(path: str) -> tuple[str, str | None]:
     """Parse mode and project_id from URL sub-path.
 
-    "/" or ""       → ("all", None)
+    "/" or ""       → ("agent", None)
     "/ucl"          → ("ucl", None)
     "/ucl/<uuid>"   → ("ucl", "<uuid>")
     """
     m = _UCL_PATH_RE.match(path)
     if m:
         return "ucl", m.group(1)
-    return "all", None
+    return "agent", None
 
 
 # ---------------------------------------------------------------------------
@@ -690,7 +690,7 @@ def _create_mcp_server(tools: list[Tool]) -> Server:
 # Server entry points — one per transport
 # ---------------------------------------------------------------------------
 
-async def run_stdio(mode: str = "all", project_id: str | None = None):
+async def run_stdio(mode: str = "agent", project_id: str | None = None):
     """Run the Fastn MCP server via stdio transport (local, default)."""
     global _server_mode, _server_project_id
     _server_mode = mode
@@ -932,11 +932,11 @@ def create_starlette_app(
 
         endpoints = []
         if enable_shttp:
-            endpoints.append({"method": "POST", "path": "/shttp", "url": f"{base}/shttp", "mode": "all", "tools": len(all_tool_names), "description": "Streamable HTTP — all tools"})
+            endpoints.append({"method": "POST", "path": "/shttp", "url": f"{base}/shttp", "mode": "agent", "tools": len(all_tool_names), "description": "Streamable HTTP — all tools"})
             endpoints.append({"method": "POST", "path": "/shttp/ucl", "url": f"{base}/shttp/ucl", "mode": "ucl", "tools": len(ucl_tool_names), "description": "Streamable HTTP — discovery tools only"})
             endpoints.append({"method": "POST", "path": "/shttp/ucl/{project_id}", "url": f"{base}/shttp/ucl/{{project_id}}", "mode": "ucl", "tools": len(ucl_no_proj_names), "description": "Streamable HTTP — discovery with pre-set project"})
         if enable_sse:
-            endpoints.append({"method": "GET", "path": "/sse", "url": f"{base}/sse", "mode": "all", "tools": len(all_tool_names), "description": "SSE — all tools"})
+            endpoints.append({"method": "GET", "path": "/sse", "url": f"{base}/sse", "mode": "agent", "tools": len(all_tool_names), "description": "SSE — all tools"})
             endpoints.append({"method": "GET", "path": "/sse/ucl", "url": f"{base}/sse/ucl", "mode": "ucl", "tools": len(ucl_tool_names), "description": "SSE — discovery tools only"})
             endpoints.append({"method": "GET", "path": "/sse/ucl/{project_id}", "url": f"{base}/sse/ucl/{{project_id}}", "mode": "ucl", "tools": len(ucl_no_proj_names), "description": "SSE — discovery with pre-set project"})
             endpoints.append({"method": "POST", "path": "/messages/", "url": f"{base}/messages/", "description": "SSE messages"})
@@ -950,7 +950,7 @@ def create_starlette_app(
             endpoints.append({"method": "GET", "path": "/callback", "url": f"{base}/callback", "description": "Keycloak callback"})
 
         modes = {
-            "all": {"description": "All tools (discovery + execution + flows + config)", "tools": all_tool_names},
+            "agent": {"description": "All tools (discovery + execution + flows + config)", "tools": all_tool_names},
             "ucl": {"description": "Discovery and execution tools only", "tools": ucl_tool_names},
         }
 
@@ -1210,7 +1210,7 @@ async def main(
     port: int = 8000,
     auth_enabled: bool = True,
     server_url: Optional[str] = None,
-    mode: str = "all",
+    mode: str = "agent",
     project_id: Optional[str] = None,
 ):
     """Run the Fastn MCP server.

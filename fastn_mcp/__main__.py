@@ -72,9 +72,9 @@ def cli():
     )
     parser.add_argument(
         "--mode",
-        choices=["all", "ucl"],
-        default="all",
-        help='Tool mode for stdio: "all" (all tools) or "ucl" '
+        choices=["agent", "ucl"],
+        default="agent",
+        help='Tool mode for stdio: "agent" (all tools) or "ucl" '
              '(discovery + execution only). HTTP transports use URL path '
              '(/shttp/ucl, /sse/ucl).',
     )

@@ -1044,11 +1044,11 @@ class TestRootEndpoint:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/")
             data = resp.json()
-            # modes dict with all and ucl
+            # modes dict with agent and ucl
             assert "modes" in data
-            assert "all" in data["modes"]
+            assert "agent" in data["modes"]
             assert "ucl" in data["modes"]
-            all_tools = data["modes"]["all"]["tools"]
+            all_tools = data["modes"]["agent"]["tools"]
             ucl_tools = data["modes"]["ucl"]["tools"]
             assert len(all_tools) == len(TOOLS)
             assert set(ucl_tools) == UCL_TOOL_NAMES
@@ -2852,13 +2852,13 @@ class TestListProjects:
 class TestParseModePath:
     """Tests for _parse_mode_from_path — URL sub-path → (mode, project_id)."""
 
-    def test_root_returns_all(self):
+    def test_root_returns_agent(self):
         from fastn_mcp.server import _parse_mode_from_path
-        assert _parse_mode_from_path("/") == ("all", None)
+        assert _parse_mode_from_path("/") == ("agent", None)
 
-    def test_empty_returns_all(self):
+    def test_empty_returns_agent(self):
         from fastn_mcp.server import _parse_mode_from_path
-        assert _parse_mode_from_path("") == ("all", None)
+        assert _parse_mode_from_path("") == ("agent", None)
 
     def test_ucl_returns_ucl_mode(self):
         from fastn_mcp.server import _parse_mode_from_path
@@ -2870,9 +2870,9 @@ class TestParseModePath:
         assert mode == "ucl"
         assert pid == "c1653d47-abcd-1234-ef01-567890abcdef"
 
-    def test_unknown_path_returns_all(self):
+    def test_unknown_path_returns_agent(self):
         from fastn_mcp.server import _parse_mode_from_path
-        assert _parse_mode_from_path("/something") == ("all", None)
+        assert _parse_mode_from_path("/something") == ("agent", None)
 
 
 class TestServerMode:
@@ -2886,7 +2886,7 @@ class TestServerMode:
 
     def setup_method(self):
         """Reset server mode/project to defaults before each test."""
-        _server_mod._server_mode = "all"
+        _server_mod._server_mode = "agent"
         _server_mod._server_project_id = None
         _server_mod._request_project_id.set(None)
 
