@@ -36,9 +36,9 @@ dev = [
 
 [project.urls]
 Homepage = "https://fastn.dev"
-Repository = "https://github.com/nicely-gg/fastn-mcp"
+Repository = "https://github.com/fastnai/fastn-mcp"
 Documentation = "https://docs.fastn.dev"
-Issues = "https://github.com/nicely-gg/fastn-mcp/issues"
+Issues = "https://github.com/fastnai/fastn-mcp/issues"
 
 [project.scripts]
 fastn-mcp = "fastn_mcp.__main__:cli"

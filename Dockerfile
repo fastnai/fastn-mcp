@@ -25,7 +25,7 @@ FROM python:3.12-slim
 
 LABEL maintainer="Fastn <support@fastn.dev>"
 LABEL description="Fastn MCP Server — MCP gateway for 250+ enterprise integrations"
-LABEL org.opencontainers.image.source="https://github.com/nicely-gg/fastn-mcp"
+LABEL org.opencontainers.image.source="https://github.com/fastnai/fastn-mcp"
 
 # Create non-root user
 RUN groupadd --gid 1000 fastn && \

@@ -4,7 +4,7 @@
 
 Fastn MCP Server is a production-ready [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) gateway that connects AI coding assistants and agents to Slack, Jira, GitHub, Salesforce, HubSpot, Postgres, and 200+ more services — with centralized auth, observability, and sub-second execution.
 
-Built on the [Fastn SDK](https://github.com/nicely-gg/fastn-sdk), this server exposes MCP tools that any compatible AI platform can use out of the box.
+Built on the [Fastn SDK](https://github.com/fastnai/fastn-sdk), this server exposes MCP tools that any compatible AI platform can use out of the box.
 
 ## Why Fastn MCP Server?
 
@@ -29,7 +29,7 @@ pip install fastn-mcp-server
 Or clone and install from source:
 
 ```bash
-git clone https://github.com/nicely-gg/fastn-mcp.git
+git clone https://github.com/fastnai/fastn-mcp.git
 cd fastn-mcp
 pip install -e ".[dev]"
 ```
@@ -261,7 +261,7 @@ Add to `.cursor/mcp.json` in your project:
 ### Setup
 
 ```bash
-git clone https://github.com/nicely-gg/fastn-mcp.git
+git clone https://github.com/fastnai/fastn-mcp.git
 cd fastn-mcp
 python -m venv .venv
 source .venv/bin/activate
@@ -346,6 +346,6 @@ MIT
 ## Links
 
 - [Fastn Platform](https://fastn.dev)
-- [Fastn SDK](https://github.com/nicely-gg/fastn-sdk)
+- [Fastn SDK](https://github.com/fastnai/fastn-sdk)
 - [MCP Specification](https://modelcontextprotocol.io/)
 - [Documentation](https://docs.fastn.dev)
