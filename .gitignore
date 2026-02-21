@@ -1,14 +1,33 @@
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
 venv/
-ENV/
 env/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment
 .env
-.venv
-env.bak/
-venv.bak/
-pythonenv*
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,15 +1,23 @@
-version: '3.8'
-
 services:
-  ucl-stdio-server:
+  fastn-mcp:
     build: .
-    container_name: ucl-stdio-server
+    image: fastn-mcp:latest
+    container_name: fastn-mcp
+    ports:
+      - "${FASTN_MCP_PORT:-8000}:8000"
     environment:
-      - API_KEY=${API_KEY:-dummy_api_key}
-      - SPACE_ID=${SPACE_ID:-dummy_space_id}
-      - TENANT_ID=${TENANT_ID:-}
-      - AUTH_TOKEN=${AUTH_TOKEN:-}
-      - CONFIG_MODE=${CONFIG_MODE:-basic}
-    volumes:
-      - .:/app
+      - FASTN_API_KEY=${FASTN_API_KEY}
+      - FASTN_PROJECT_ID=${FASTN_PROJECT_ID}
+      - FASTN_MCP_PORT=8000
+      - FASTN_MCP_HOST=0.0.0.0
+      - FASTN_MCP_TRANSPORT=${FASTN_MCP_TRANSPORT:-both}
+      - FASTN_MCP_SERVER_URL=${FASTN_MCP_SERVER_URL:-}
+      - FASTN_MCP_NO_AUTH=${FASTN_MCP_NO_AUTH:-false}
+      - FASTN_MCP_VERBOSE=${FASTN_MCP_VERBOSE:-false}
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/.well-known/oauth-protected-resource')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3

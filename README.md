@@ -1,315 +1,351 @@
-# Unified Context Layer (UCL) MCP Gateway 
+# Fastn MCP Server
 
-Unified Context Layer (UCL) is a multi-tenant Model Context Protocol (MCP) server that enables AI agents, automation platforms, and applications to connect to over 1,000 SaaS tools—such as Slack, Jira, Gmail, Shopify, Notion, and more—via a single standardized /command endpoint. UCL abstracts away SDK sprawl, glue code, and complex authentication flows, allowing developers to orchestrate context-rich, cross-platform integrations without building and maintaining separate connectors for each service.
+**The fastest way to give AI agents access to 250+ enterprise integrations.**
 
-## Features
+Fastn MCP Server is a production-ready [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) gateway that connects AI coding assistants and agents to Slack, Jira, GitHub, Salesforce, HubSpot, Postgres, and 200+ more services — with centralized auth, observability, and sub-second execution.
 
-- **Integrated platform support** - Use services like Slack, Notion, HubSpot, and more through the Fastn server
-- **Flexible authentication** - Use either API key or tenant-based authentication
-- **Comprehensive logging** - Detailed logs for troubleshooting
-- **Error handling** - Robust error management for various scenarios
+Built on the [Fastn SDK](https://github.com/nicely-gg/fastn-sdk), this server exposes MCP tools that any compatible AI platform can use out of the box.
 
-## Prerequisites
+## Why Fastn MCP Server?
 
-- Python 3.10 or higher
+| Feature | Description |
+|---------|-------------|
+| **250+ Connectors** | Slack, Jira, GitHub, Salesforce, HubSpot, Postgres, Stripe, Notion, Linear, and more |
+| **MCP Native** | Works with Claude Desktop, Cursor, Lovable, Bolt, v0, and any MCP-compatible client |
+| **Centralized Auth** | OAuth 2.1, API keys, and multi-tenant credential management — no per-tool auth setup |
+| **Sub-Second Execution** | Direct API calls through the Fastn platform with built-in caching and connection pooling |
+| **Multiple Transports** | stdio (local), SSE, and Streamable HTTP for any deployment model |
+| **Production Ready** | Docker support, health checks, structured logging, and OAuth 2.1 protected resource metadata |
+| **Flow Automation** | Create, manage, and execute multi-step workflows that compose tools |
 
-## Installation Options
+## Quick Start
 
-### Option 1: Package Installation (Recommended)
-
-The easiest way to install the UCL server is using pip:
+### 1. Install
 
 ```bash
 pip install fastn-mcp-server
 ```
 
-To find the exact path of the installed command:
-- On macOS/Linux: `which fastn-mcp-server`
-- On Windows: `where fastn-mcp-server`
-
-## After Package Installation
+Or clone and install from source:
 
 ```bash
+git clone https://github.com/nicely-gg/fastn-mcp.git
+cd fastn-mcp
+pip install -e ".[dev]"
+```
+
+### 2. Configure
+
+Set your Fastn credentials:
+
+```bash
+export FASTN_API_KEY="your-api-key"
+export FASTN_PROJECT_ID="your-project-id"
+```
+
+Get your API key and project ID from [app.fastn.dev](https://app.fastn.dev).
+
+### 3. Run
+
+**Local (stdio) — for Claude Desktop, Cursor:**
+
+```bash
+fastn-mcp --stdio
+```
+
+**Remote (SSE + Streamable HTTP) — for web-based AI platforms:**
+
+```bash
+fastn-mcp --sse --shttp --port 8000
+```
+
+**Docker:**
+
+```bash
+docker build -t fastn-mcp .
+docker run -p 8000:8000 \
+  -e FASTN_API_KEY=your-key \
+  -e FASTN_PROJECT_ID=your-project-id \
+  fastn-mcp
+```
+
+## MCP Tools
+
+The server exposes these tools to AI agents:
+
+### Discovery & Execution
+
+| Tool | Description |
+|------|-------------|
+| `find_tools` | Search for available tools by natural language prompt. Returns matching tools with IDs and input schemas. |
+| `execute_action` | Execute a tool by its ID with parameters. Returns the result directly. |
+| `discover_tools` | Browse all 250+ available connectors in the registry, including ones not yet connected. |
+| `list_projects` | List available workspaces for the authenticated user. |
+
+**Workflow:** `find_tools` → `execute_action`. If `find_tools` returns nothing, call `discover_tools` to check if the connector exists but isn't connected yet.
+
+### Flow Management
+
+| Tool | Description |
+|------|-------------|
+| `list_flows` | List saved automations (flows) in the workspace. |
+| `run_flow` | Execute a saved flow by its ID. |
+| `delete_flow` | Remove a flow from the workspace. |
+| `create_flow` | *(Under development)* Create a flow from natural language. |
+| `update_flow` | *(Under development)* Update an existing flow. |
+
+### Configuration
+
+| Tool | Description |
+|------|-------------|
+| `configure_custom_auth` | Register a custom JWT auth provider (Auth0, Firebase, Supabase). |
+
+## Architecture
+
+```
+AI Agent (Claude, Cursor, Lovable)
+    │
+    ▼
+MCP Protocol (stdio / SSE / Streamable HTTP)
+    │
+    ▼
+┌─────────────────────────────┐
+│   Fastn MCP Server          │
+│   ┌───────────────────────┐ │
+│   │ Tool Discovery        │ │  find_tools, discover_tools
+│   │ Tool Execution        │ │  execute_action
+│   │ Flow Management       │ │  list/run/delete/create flows
+│   │ Auth & Config         │ │  OAuth 2.1, custom JWT
+│   └───────────────────────┘ │
+└─────────────────────────────┘
+    │
+    ▼
+Fastn SDK → Fastn API
+    │
+    ▼
+250+ Connectors (Slack, Jira, GitHub, Salesforce, Postgres, ...)
+```
+
+**Connectors** provide tools. **Flows** compose tools. **Agents** run flows and tools with reasoning.
+
+## Transport Modes
+
+### stdio (Local)
+
+For pipe-based clients like Claude Desktop and Cursor:
+
+```bash
+fastn-mcp --stdio
+```
+
+### SSE + Streamable HTTP (Remote)
+
+For web-based AI platforms. Supports per-path tool filtering:
+
+```bash
+fastn-mcp --sse --shttp --port 8000
+```
+
+| Endpoint | Tools Exposed |
+|----------|--------------|
+| `POST /shttp` | All tools (discovery + flows + config) |
+| `POST /shttp/ucl` | Discovery tools only (4 tools) |
+| `POST /shttp/ucl/{project_id}` | Discovery tools with pre-set project (3 tools) |
+| `GET /sse`, `GET /sse/ucl`, etc. | Same pattern for SSE transport |
+
+### Tool Mode (stdio)
+
+Filter tools in stdio mode:
+
+```bash
+fastn-mcp --stdio --mode ucl              # Discovery tools only
+fastn-mcp --stdio --mode ucl --project ID  # Discovery + pre-set project
+```
+
+## Authentication
+
+### OAuth 2.1 (Production)
+
+The server implements RFC 9728 Protected Resource Metadata for OAuth 2.1:
+
+```bash
+fastn-mcp --sse --shttp --port 8000
+# OAuth endpoints auto-configured at /.well-known/oauth-protected-resource
+```
+
+Set the public URL for OAuth metadata:
+
+```bash
+fastn-mcp --sse --shttp --port 8000 --server-url https://mcp.example.com
+```
+
+### No Auth (Development)
+
+For local testing:
+
+```bash
+fastn-mcp --sse --port 8000 --no-auth
+```
+
+## Docker Deployment
+
+### Build and Run
+
+```bash
+docker build -t fastn-mcp .
+docker run -p 8000:8000 \
+  -e FASTN_API_KEY=your-key \
+  -e FASTN_PROJECT_ID=your-project-id \
+  fastn-mcp
+```
+
+### Docker Compose
+
+```bash
+docker compose up -d
+```
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FASTN_API_KEY` | Yes | Your Fastn API key from [app.fastn.dev](https://app.fastn.dev) |
+| `FASTN_PROJECT_ID` | Yes | Your workspace/project ID |
+| `FASTN_MCP_PORT` | No | Server port (default: `8000`) |
+| `FASTN_MCP_HOST` | No | Bind address (default: `0.0.0.0`) |
+| `FASTN_MCP_SERVER_URL` | No | Public URL for OAuth metadata |
+| `FASTN_MCP_NO_AUTH` | No | Set to `true` to disable OAuth (dev only) |
+| `FASTN_MCP_TRANSPORT` | No | Transport mode: `sse`, `shttp`, `both` (default: `both`) |
+| `FASTN_MCP_VERBOSE` | No | Set to `true` for debug logging |
+
+## Claude Desktop Configuration
+
+Add to your Claude Desktop config (`claude_desktop_config.json`):
+
+```json
 {
   "mcpServers": {
-      "fastn": {
-          "command": "fastn-mcp-server",
-          "args": [
-              "--api_key",
-              "YOUR_API_KEY",
-              "--space_id",
-              "YOUR_WORKSPACE_ID"
-          ]
+    "fastn": {
+      "command": "fastn-mcp",
+      "args": ["--stdio"],
+      "env": {
+        "FASTN_API_KEY": "your-api-key",
+        "FASTN_PROJECT_ID": "your-project-id"
       }
+    }
   }
 }
 ```
 
-### Option 2: Manual Setup
+## Cursor Configuration
 
-```bash
-# Clone repository and navigate to directory
-git clone <your-repo-url> && cd fastn-server
-
-# macOS/Linux: Install UV, create virtual environment, and install dependencies
-curl -LsSf https://astral.sh/uv/install.sh | sh && uv venv && source .venv/bin/activate && uv pip install -e .
-
-# Windows (PowerShell): Install UV, create a virtual environment, and install dependencies
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex" && uv venv && .venv\Scripts\activate && uv pip install -e .
-
-# Install dependencies directly
-uv pip install "httpx>=0.28.1" "mcp[cli]>=1.2.0"
-```
-
-## UCL Account Setup
-
-1. Log in to your UCL account or sign up for a new UCL account
-3. Activate the service(s)/connector(s) you want to use
-4. Go to the "Integrate" section on the left-hand side and follow the provided instructions to connect UCL to your agents.
-5. Alternatively, you can also select and different method to use UCL as mentioned within the integrate section.
-
-## Running the Server
-
-The server supports two authentication methods:
-
-### Authentication Method 1: API Key
-
-```bash
-# Package installation
-fastn-mcp-server --api_key YOUR_API_KEY --space_id YOUR_WORKSPACE_ID
-
-# Manual installation
-uv run fastn-server.py --api_key YOUR_API_KEY --space_id YOUR_WORKSPACE_ID
-```
-
-### Authentication Method 2: Tenant-based
-
-```bash
-# Package installation
-fastn-mcp-server --space_id YOUR_WORKSPACE_ID --tenant_id YOUR_TENANT_ID --auth_token YOUR_AUTH_TOKEN
-
-# Manual installation
-uv run fastn-server.py --space_id YOUR_WORKSPACE_ID --tenant_id YOUR_TENANT_ID --auth_token YOUR_AUTH_TOKEN
-```
-
-## Integration with AI Assistants
-
-### Claude Integration
-
-1. Open the Claude configuration file:
-   - Windows: `notepad "%APPDATA%\Claude\claude_desktop_config.json"` or `code "%APPDATA%\Claude\claude_desktop_config.json"`
-   - Mac: `code ~/Library/Application\ Support/Claude/claude_desktop_config.json`
-
-2. Add the appropriate configuration:
-
-#### Using Package Installation
-
-```json
-{
-    "mcpServers": {
-        "fastn": {
-            "command": "/path/to/fastn-mcp-server",
-            "args": [
-                "--api_key",
-                "YOUR_API_KEY",
-                "--space_id",
-                "YOUR_WORKSPACE_ID"
-            ]
-        }
-    }
-}
-```
-
-Or with tenant authentication:
-
-```json
-{
-    "mcpServers": {
-        "fastn": {
-            "command": "/path/to/fastn-mcp-server",
-            "args": [
-                "--space_id",
-                "YOUR_WORKSPACE_ID",
-                "--tenant_id",
-                "YOUR_TENANT_ID",
-                "--auth_token",
-                "YOUR_AUTH_TOKEN"
-            ]
-        }
-    }
-}
-```
-
-#### Using Manual Installation
-
-API Key authentication:
-
-```json
-{
-    "mcpServers": {
-        "fastn": {
-            "command": "/path/to/your/uv",
-            "args": [
-                "--directory",
-                "/path/to/your/fastn-server",
-                "run",
-                "fastn-server.py",
-                "--api_key",
-                "YOUR_API_KEY",
-                "--space_id",
-                "YOUR_WORKSPACE_ID"
-            ]
-        }
-    }
-}
-```
-
-Tenant authentication:
-
-```json
-{
-    "mcpServers": {
-        "fastn": {
-            "command": "/path/to/your/uv",
-            "args": [
-                "--directory",
-                "/path/to/your/fastn-server",
-                "run",
-                "fastn-server.py",
-                "--space_id",
-                "YOUR_WORKSPACE_ID",
-                "--tenant_id",
-                "YOUR_TENANT_ID",
-                "--auth_token",
-                "YOUR_AUTH_TOKEN"
-            ]
-        }
-    }
-}
-```
-
-### Cursor Integration
-
-1. Open Cursor settings
-2. Navigate to the "Tools & Integrations" tab and click "Add Custom MCP"
-3. Click on "Add new MCP server"
-4. Add a name for your server (e.g., "fastn")
-5. Head back to UCL and within the Integrate section, head over to "Real Time Event Streaming" mentioned at the bottom of the Integrate section
-6. Copy the JSON command and head back to Cursor to paste the file in mcp.json and save.
-
-## Docker Integration
-
-### Step 1: Setup Environment Configuration
-
-Create a `.env` file in your project directory with your UCL credentials:
-
-```bash
-# Configuration Format 1: Basic API Key and Space ID
-API_KEY=your_actual_api_key
-SPACE_ID=your_actual_space_id
-
-# Configuration Format 2: Extended with Tenant ID and Auth Token
-TENANT_ID=your_tenant_id
-AUTH_TOKEN=your_actual_auth_token
-
-# Set configuration mode: "basic" or "extended"
-CONFIG_MODE=extended
-```
-
-### Step 2: Build and Run with Docker Compose
-
-First, build and start the container:
-
-```bash
-docker-compose up --build
-```
-
-This will create the UCL server image and verify it starts correctly.
-
-### Step 3: Configure AI Assistants for Docker Integration
-
-#### Claude Desktop Integration
-
-1. Open the Claude configuration file:
-   - Windows: `notepad "%APPDATA%\Claude\claude_desktop_config.json"`
-   - Mac: `code ~/Library/Application\ Support/Claude/claude_desktop_config.json`
-
-2. Add the Docker configuration:
+Add to `.cursor/mcp.json` in your project:
 
 ```json
 {
   "mcpServers": {
-    "ucl": {
-      "command": "docker",
-      "args": [
-        "run", "-i", "--rm",
-        "--env-file", "/path/to/your/fastn-stdio-server/.env",
-        "ucl-stdio-server"
-      ]
+    "fastn": {
+      "command": "fastn-mcp",
+      "args": ["--stdio", "--mode", "ucl"],
+      "env": {
+        "FASTN_API_KEY": "your-api-key",
+        "FASTN_PROJECT_ID": "your-project-id"
+      }
     }
   }
 }
 ```
 
-**Note:** Replace `/path/to/your/fastn-stdio-server/.env` with the actual path to your `.env` file.
+## Development
 
-#### Alternative: Using Environment Variables
+### Setup
 
-If you prefer to pass environment variables directly:
-
-```json
-{
-  "mcpServers": {
-    "ucl": {
-      "command": "docker",
-      "args": [
-        "run", "-i", "--rm",
-        "-e", "API_KEY=your_actual_api_key",
-        "-e", "SPACE_ID=your_actual_space_id", 
-        "-e", "TENANT_ID=your_tenant_id",
-        "-e", "AUTH_TOKEN=your_actual_auth_token",
-        "-e", "CONFIG_MODE=extended",
-        "ucl-stdio-server"
-      ]
-    }
-  }
-}
-```
-
-### Benefits of Docker Integration
-
-- **Isolation**: UCL server runs in a secure container environment
-- **Consistency**: Same runtime across different machines and platforms
-- **Easy Setup**: No need to install Python dependencies locally
-- **Scalability**: Can be deployed in cloud environments or orchestrated with Kubernetes
-
-## Troubleshooting
-
-### Package Structure Error
-
-If you encounter an error like this during installation:
-```
-ValueError: Unable to determine which files to ship inside the wheel using the following heuristics:
-The most likely cause of this is that there is no directory that matches the name of your project (fastn).
-```
-
-**Quick Fix:**
-1. Make sure `pyproject.toml` has the wheel configuration:
-```toml
-[tool.hatch.build.targets.wheel]
-packages = ["."]
-```
-
-2. Then install dependencies:
 ```bash
-uv pip install "httpx>=0.28.1" "mcp[cli]>=1.2.0"
+git clone https://github.com/nicely-gg/fastn-mcp.git
+cd fastn-mcp
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
 ```
 
-## Support
+### Run Tests
 
-- Documentation: https://docs.fastn.ai/ucl-unified-context-layer/about-ucl
-- Community: [https://discord.gg/Nvd5p8axU3](https://discord.gg/Nvd5p8axU3)
+```bash
+pytest tests/ -q
+```
+
+### Project Structure
+
+```
+fastn-mcp/
+├── fastn_mcp/
+│   ├── __init__.py          # Package metadata
+│   ├── __main__.py          # CLI entry point
+│   ├── server.py            # MCP server, tools, handlers, routing
+│   ├── auth.py              # OAuth 2.1 provider (RFC 9728)
+│   └── tools/               # Tool utilities
+├── tests/
+│   ├── test_server.py       # 180+ tests covering all tools and transports
+│   └── conftest.py          # Test fixtures
+├── docs/
+│   └── architecture.md      # Detailed architecture documentation
+├── Dockerfile               # Production container
+├── docker-compose.yml       # Docker Compose for deployment
+├── pyproject.toml           # Python project configuration
+└── README.md
+```
+
+## CLI Reference
+
+```
+fastn-mcp [OPTIONS]
+
+Transport:
+  --stdio          Use stdio transport (Claude Desktop, Cursor)
+  --sse            Enable SSE transport
+  --shttp          Enable Streamable HTTP transport
+
+Server:
+  --host HOST      Bind address (default: 0.0.0.0)
+  --port PORT      Port number (default: 8000)
+  --no-auth        Disable OAuth (development only)
+  --server-url URL Public URL for OAuth metadata
+
+Mode:
+  --mode {all,ucl} Tool mode for stdio: "all" or "ucl" (discovery only)
+  --project ID     Pre-set project ID for stdio
+
+Debug:
+  -v, --verbose    Enable debug logging
+```
+
+## Supported Connectors
+
+Fastn provides 250+ pre-built connectors including:
+
+**Communication:** Slack, Microsoft Teams, Discord, Gmail, Outlook, SendGrid, Twilio
+
+**Project Management:** Jira, Linear, Asana, Trello, Monday.com, ClickUp, Notion
+
+**Development:** GitHub, GitLab, Bitbucket, PagerDuty, Sentry, Datadog
+
+**CRM & Sales:** Salesforce, HubSpot, Pipedrive, Zoho CRM
+
+**Databases:** PostgreSQL, MySQL, MongoDB, Redis, Supabase, Firebase
+
+**Cloud:** AWS, Google Cloud, Azure, Cloudflare
+
+**Finance:** Stripe, QuickBooks, Xero
+
+**And 200+ more** — browse the full catalog at [app.fastn.dev](https://app.fastn.dev)
 
 ## License
 
-This project is licensed under the terms included in the [LICENSE](LICENSE) file.
+MIT
+
+## Links
+
+- [Fastn Platform](https://fastn.dev)
+- [Fastn SDK](https://github.com/nicely-gg/fastn-sdk)
+- [MCP Specification](https://modelcontextprotocol.io/)
+- [Documentation](https://docs.fastn.dev)

@@ -1,25 +1,59 @@
-FROM python:3.10-slim
+# ── Build stage ────────────────────────────────────────────────────────
+FROM python:3.12-slim AS builder
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-  && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+
+# Install build dependencies
+RUN pip install --no-cache-dir hatchling
+
+# Copy project files
+COPY pyproject.toml .
+COPY fastn_mcp/ fastn_mcp/
+
+# Build wheel
+RUN pip wheel --no-cache-dir --wheel-dir /wheels .
+RUN pip wheel --no-cache-dir --wheel-dir /wheels \
+    "mcp[cli]>=1.2.0" \
+    "fastn-sdk>=0.2.3" \
+    "httpx>=0.28.1" \
+    "starlette>=0.27.0" \
+    "uvicorn>=0.24.0" \
+    "PyJWT[crypto]>=2.8.0"
+
+# ── Runtime stage ─────────────────────────────────────────────────────
+FROM python:3.12-slim
+
+LABEL maintainer="Fastn <support@fastn.dev>"
+LABEL description="Fastn MCP Server — MCP gateway for 250+ enterprise integrations"
+LABEL org.opencontainers.image.source="https://github.com/nicely-gg/fastn-mcp"
+
+# Create non-root user
+RUN groupadd --gid 1000 fastn && \
+    useradd --uid 1000 --gid fastn --shell /bin/bash --create-home fastn
 
 WORKDIR /app
 
-# Copy project files
-COPY . /app
+# Install wheels from build stage
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
 
-# Make entrypoint script executable
-RUN chmod +x /app/entrypoint.sh
+# Environment defaults
+ENV FASTN_MCP_HOST=0.0.0.0 \
+    FASTN_MCP_PORT=8000 \
+    FASTN_MCP_TRANSPORT=both \
+    PYTHONUNBUFFERED=1
 
-# Upgrade pip and install uv and project dependencies
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir uv \
-    && pip install --no-cache-dir -e .
+EXPOSE 8000
 
-# Expose a port if necessary (not strictly needed for UCL stdio MCP servers)
+# Health check — hit the OAuth metadata endpoint (always available)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${FASTN_MCP_PORT}/.well-known/oauth-protected-resource')" || exit 1
 
-# Use entrypoint script to handle different configuration modes
-ENTRYPOINT ["/app/entrypoint.sh"]
+# Switch to non-root user
+USER fastn
+
+# Entrypoint script handles env-to-CLI flag translation
+COPY --chown=fastn:fastn docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
+
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
