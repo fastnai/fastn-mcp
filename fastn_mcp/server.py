@@ -249,20 +249,20 @@ TOOLS = [
             "properties": {
                 "prompt": {
                     "type": "string",
-                    "description": "Natural language description of what you want to do",
+                    "description": "Describe the integration you need, including context about what you are building (e.g. 'send a Slack notification when a new order is placed' rather than just 'slack'). Richer prompts return more relevant tools.",
                 },
                 "goal": {
                     "type": "string",
-                    "description": "RECOMMENDED: Provide the high-level goal you are building toward so Fastn can rank tools by relevance (e.g. 'build a CRM dashboard', 'automate customer onboarding', 'e-commerce checkout flow')",
+                    "description": "The broader objective you are working toward (e.g. 'build a CRM dashboard', 'e-commerce checkout flow'). Helps rank tools by relevance.",
                 },
                 "platform": {
                     "type": "string",
-                    "description": "RECOMMENDED: Which AI platform you are — helps Fastn optimize responses for your environment (e.g. 'lovable', 'cursor', 'claude-desktop', 'bolt', 'v0')",
+                    "description": "AI platform making this call (e.g. 'lovable', 'cursor', 'claude-desktop', 'bolt', 'v0'). Set via project instructions.",
                 },
                 "categories": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Narrow results to specific connector domains (e.g. ['payments', 'crm', 'messaging', 'database', 'email', 'project-management', 'cloud'])",
+                    "description": "Narrow results to connector domains (e.g. ['payments', 'crm', 'messaging', 'database', 'email', 'project-management'])",
                 },
                 "limit": {
                     "type": "integer",

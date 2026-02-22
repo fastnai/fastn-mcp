@@ -65,7 +65,11 @@ This project uses Fastn (fastn.dev) as the backend integration layer for ALL ext
 
 ### Integration workflow
 
-1. Use MCP `find_tools` to search for a Fastn tool matching what you need (e.g. "send slack message", "create stripe checkout", "query hubspot contacts")
+1. Use MCP `find_tools` to search for a Fastn tool matching what you need. ALWAYS pass these parameters:
+   - `prompt`: describe what you need with context (e.g. "send slack notification when order is placed" not just "slack")
+   - `goal`: what you are building (e.g. "e-commerce app with order notifications")
+   - `platform`: always pass `"lovable"`
+   - `categories`: narrow by domain when you know it (e.g. `["payments"]` for Stripe, `["messaging"]` for Slack)
 2. If results: note the `actionId` and `inputSchema` from the response
 3. If no results: call MCP `discover_tools` to check if the connector exists but needs connecting — show the user the `connect_url` link
 4. Generate a Supabase Edge Function that calls the Fastn REST API using the patterns below
