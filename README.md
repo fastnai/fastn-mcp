@@ -22,48 +22,70 @@ Built on the [Fastn SDK](https://github.com/fastnai/fastn-sdk), this server expo
 
 ## Quick Start
 
-### 1. Install
+### 1. Sign up at [app.ucl.dev](https://app.ucl.dev)
+
+Create an account and connect your first connectors (Gmail, Slack, GitHub, etc.).
+
+### 2. Connect your MCP client
+
+**Hosted server (recommended)** — no installation needed:
+
+```
+https://mcp.live.fastn.ai/shttp
+```
+
+Point any MCP client at this URL. Authentication is handled via MCP OAuth 2.1 automatically. See [Client Configuration](#client-configuration) for Claude Desktop and Cursor examples.
+
+**Self-hosted** — install and run your own instance:
 
 ```bash
 pip install fastn-mcp-server
+fastn-mcp --shttp --port 8000
 ```
 
-Or clone and install from source:
+## Connecting to the MCP Server
+
+### Endpoints
+
+Use the hosted server (`mcp.live.fastn.ai`) or your self-hosted instance. Each path exposes a different set of tools:
+
+| Endpoint | Tools |
+|----------|-------|
+| `/shttp` | All 11 tools: `find_tools`, `execute_tool`, `discover_tools`, `list_skills`, `list_projects`, `list_flows`, `run_flow`, `delete_flow`, `create_flow`, `update_flow`, `configure_custom_auth` |
+| `/shttp/ucl` | 5 tools: `find_tools`, `execute_tool`, `discover_tools`, `list_skills`, `list_projects` |
+| `/shttp/ucl/{project_id}` | 4 tools: `find_tools`, `execute_tool`, `discover_tools`, `list_skills` |
+| `/shttp/ucl/{project_id}/{skill_id}` | 3 tools: `find_tools`, `execute_tool`, `discover_tools` |
+| `/sse`, `/sse/ucl`, etc. | Same pattern for SSE transport |
+
+**Examples with the hosted server:**
+
+```
+https://mcp.live.fastn.ai/shttp                              # All tools
+https://mcp.live.fastn.ai/shttp/ucl                           # UCL tools only
+https://mcp.live.fastn.ai/shttp/ucl/{project_id}              # Pre-set project
+https://mcp.live.fastn.ai/shttp/ucl/{project_id}/{skill_id}   # Pre-set project + skill
+```
+
+### Authentication
+
+The MCP server supports three authentication methods:
+
+**MCP OAuth 2.1** — Standard MCP OAuth flow with PKCE. The server bridges to Fastn's identity provider automatically. MCP clients that support OAuth (Claude Desktop, Cursor, Lovable) will handle this transparently — just connect and authenticate when prompted.
+
+**Bearer Token** — Pass a Fastn auth token directly via the `Authorization` header:
+
+```
+Authorization: Bearer <your-fastn-token>
+```
+
+**API Key (stdio only)** — For local stdio transport, pass credentials as environment variables in the MCP client config:
 
 ```bash
-git clone https://github.com/fastnai/fastn-mcp.git
-cd fastn-mcp
-pip install -e ".[dev]"
+FASTN_API_KEY=your-api-key
+FASTN_PROJECT_ID=your-project-id
 ```
-
-### 2. Configure
 
 Get your API key and project ID from [app.ucl.dev](https://app.ucl.dev).
-
-**For stdio (Claude Desktop, Cursor):** Pass credentials as environment variables in your MCP client config (see examples below).
-
-**For remote (SSE/shttp):** Clients authenticate via the built-in MCP OAuth 2.1 flow — no manual credential setup needed.
-
-### 3. Run
-
-**Local (stdio) — for Claude Desktop, Cursor:**
-
-```bash
-fastn-mcp --stdio
-```
-
-**Remote (SSE + Streamable HTTP) — for web-based AI platforms:**
-
-```bash
-fastn-mcp --sse --shttp --port 8000
-```
-
-**Docker:**
-
-```bash
-docker build -t fastn-mcp .
-docker run -p 8000:8000 --env-file .env fastn-mcp
-```
 
 ## MCP Tools
 
@@ -125,164 +147,25 @@ Fastn SDK → Fastn API
 
 **Connectors** provide tools. **Flows** compose tools. **Agents** run flows and tools with reasoning.
 
-## Transport Modes
+## Client Configuration
 
-### stdio (Local)
-
-For pipe-based clients like Claude Desktop and Cursor:
-
-```bash
-fastn-mcp --stdio
-```
-
-### SSE + Streamable HTTP (Remote)
-
-For web-based AI platforms. Supports per-path tool filtering:
-
-```bash
-fastn-mcp --sse --shttp --port 8000
-```
-
-| Endpoint | Tools Exposed |
-|----------|--------------|
-| `POST /shttp` | All tools (UCL + flows + config) |
-| `POST /shttp/ucl` | UCL tools only (5 tools) |
-| `POST /shttp/ucl/{project_id}` | UCL tools with pre-set project (4 tools) |
-| `POST /shttp/ucl/{project_id}/{skill_id}` | UCL tools with pre-set project and skill (3 tools) |
-| `GET /sse`, `GET /sse/ucl`, etc. | Same pattern for SSE transport |
-
-### Tool Mode (stdio)
-
-Filter tools in stdio mode:
-
-```bash
-fastn-mcp --stdio --mode ucl                          # UCL tools only
-fastn-mcp --stdio --mode ucl --project ID              # UCL tools + pre-set project
-fastn-mcp --stdio --mode ucl --project ID --skill ID   # UCL tools + pre-set project and skill
-```
-
-## Authentication
-
-### stdio (Local)
-
-Credentials are passed as environment variables (`FASTN_API_KEY`, `FASTN_PROJECT_ID`) in the MCP client config. See Claude Desktop and Cursor examples below.
-
-### OAuth 2.1 (Remote)
-
-Remote transports (SSE, Streamable HTTP) use MCP OAuth 2.1 with PKCE. Clients authenticate through the standard OAuth flow — the server bridges to Fastn's identity provider automatically.
-
-The server implements RFC 9728 Protected Resource Metadata:
-
-```bash
-fastn-mcp --sse --shttp --port 8000
-# OAuth endpoints auto-configured at /.well-known/oauth-protected-resource
-```
-
-Set the public URL for OAuth metadata:
-
-```bash
-fastn-mcp --sse --shttp --port 8000 --server-url https://mcp.example.com
-```
-
-### No Auth (Development)
-
-For local testing of remote transports:
-
-```bash
-fastn-mcp --sse --port 8000 --no-auth
-```
-
-## Docker Deployment
-
-### Build and Run
-
-```bash
-docker build -t fastn-mcp .
-docker run -p 8000:8000 --env-file .env fastn-mcp
-```
-
-### Docker Compose
-
-```bash
-docker compose up -d
-```
-
-### Environment Variables
-
-For Docker/CI deployments, create a `.env` file:
-
-```bash
-# Required
-FASTN_API_KEY=your-api-key
-FASTN_PROJECT_ID=your-project-id
-
-# Optional
-FASTN_MCP_PORT=8000
-FASTN_MCP_HOST=0.0.0.0
-FASTN_MCP_SERVER_URL=https://your-public-url.ngrok-free.dev
-FASTN_MCP_TRANSPORT=both
-FASTN_MCP_NO_AUTH=false
-FASTN_MCP_VERBOSE=false
-```
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `FASTN_API_KEY` | Yes | Your Fastn API key from [app.ucl.dev](https://app.ucl.dev) |
-| `FASTN_PROJECT_ID` | Yes | Your project ID |
-| `FASTN_MCP_PORT` | No | Server port (default: `8000`) |
-| `FASTN_MCP_HOST` | No | Bind address (default: `0.0.0.0`) |
-| `FASTN_MCP_SERVER_URL` | No | Public URL for OAuth metadata (e.g. ngrok URL) |
-| `FASTN_MCP_NO_AUTH` | No | Set to `true` to disable OAuth (dev only) |
-| `FASTN_MCP_TRANSPORT` | No | Transport mode: `sse`, `shttp`, `both` (default: `both`) |
-| `FASTN_MCP_VERBOSE` | No | Set to `true` for debug logging |
-
-## Exposing with ngrok
-
-To make your local MCP server accessible to remote AI platforms (Lovable, Bolt, v0), use [ngrok](https://ngrok.com) to create a public tunnel:
-
-### 1. Start the MCP server
-
-```bash
-fastn-mcp --shttp --port 8000 --verbose
-```
-
-### 2. Start ngrok tunnel
-
-In a separate terminal:
-
-```bash
-ngrok http 8000
-```
-
-### 3. Connect with the public URL
-
-Copy the ngrok forwarding URL (e.g. `https://abc123.ngrok-free.dev`) and pass it as `--server-url` so OAuth metadata resolves correctly:
-
-```bash
-fastn-mcp --shttp --port 8000 \
-  --server-url https://abc123.ngrok-free.dev \
-  --verbose
-```
-
-The MCP endpoint is now available at:
-
-| Endpoint | URL |
-|----------|-----|
-| Streamable HTTP | `https://abc123.ngrok-free.dev/shttp` |
-| SSE | `https://abc123.ngrok-free.dev/sse` |
-| UCL only | `https://abc123.ngrok-free.dev/shttp/ucl` |
-
-### Docker + ngrok
-
-```bash
-docker run -p 8000:8000 --env-file .env \
-  -e FASTN_MCP_SERVER_URL=https://abc123.ngrok-free.dev \
-  fastn-mcp
-```
-
-## Claude Desktop Configuration
+### Claude Desktop
 
 Add to your Claude Desktop config (`claude_desktop_config.json`):
+
+**Remote (hosted server with OAuth):**
+
+```json
+{
+  "mcpServers": {
+    "fastn": {
+      "url": "https://mcp.live.fastn.ai/shttp"
+    }
+  }
+}
+```
+
+**Local (stdio with API key):**
 
 ```json
 {
@@ -299,9 +182,23 @@ Add to your Claude Desktop config (`claude_desktop_config.json`):
 }
 ```
 
-## Cursor Configuration
+### Cursor
 
 Add to `.cursor/mcp.json` in your project:
+
+**Remote (hosted server with OAuth):**
+
+```json
+{
+  "mcpServers": {
+    "fastn": {
+      "url": "https://mcp.live.fastn.ai/shttp/ucl"
+    }
+  }
+}
+```
+
+**Local (stdio with API key):**
 
 ```json
 {
@@ -317,6 +214,101 @@ Add to `.cursor/mcp.json` in your project:
   }
 }
 ```
+
+## Self-Hosting
+
+### Transport Modes
+
+**stdio (local)** — For pipe-based clients:
+
+```bash
+fastn-mcp --stdio
+fastn-mcp --stdio --mode ucl                          # UCL tools only
+fastn-mcp --stdio --mode ucl --project ID              # UCL tools + pre-set project
+fastn-mcp --stdio --mode ucl --project ID --skill ID   # UCL tools + pre-set project and skill
+```
+
+**SSE + Streamable HTTP (remote)** — For web-based AI platforms:
+
+```bash
+fastn-mcp --sse --shttp --port 8000
+```
+
+### OAuth Setup
+
+Remote transports use MCP OAuth 2.1 by default. The server implements RFC 9728 Protected Resource Metadata:
+
+```bash
+fastn-mcp --sse --shttp --port 8000
+# OAuth endpoints auto-configured at /.well-known/oauth-protected-resource
+```
+
+Set the public URL for OAuth metadata:
+
+```bash
+fastn-mcp --sse --shttp --port 8000 --server-url https://mcp.example.com
+```
+
+To disable OAuth for local development:
+
+```bash
+fastn-mcp --sse --port 8000 --no-auth
+```
+
+### Docker
+
+```bash
+docker build -t fastn-mcp .
+docker run -p 8000:8000 fastn-mcp
+```
+
+```bash
+docker compose up -d
+```
+
+### Environment Variables
+
+Server configuration for self-hosted deployments:
+
+```bash
+FASTN_MCP_PORT=8000
+FASTN_MCP_HOST=0.0.0.0
+FASTN_MCP_SERVER_URL=https://your-public-url
+FASTN_MCP_TRANSPORT=both
+FASTN_MCP_NO_AUTH=false
+FASTN_MCP_VERBOSE=false
+```
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FASTN_MCP_PORT` | No | Server port (default: `8000`) |
+| `FASTN_MCP_HOST` | No | Bind address (default: `0.0.0.0`) |
+| `FASTN_MCP_SERVER_URL` | No | Public URL for OAuth metadata |
+| `FASTN_MCP_NO_AUTH` | No | Set to `true` to disable OAuth (dev only) |
+| `FASTN_MCP_TRANSPORT` | No | Transport mode: `sse`, `shttp`, `both` (default: `both`) |
+| `FASTN_MCP_VERBOSE` | No | Set to `true` for debug logging |
+
+### Local Development with ngrok
+
+For local development and testing only — use ngrok to expose your local server:
+
+```bash
+# Terminal 1: Start the MCP server
+fastn-mcp --shttp --port 8000 --verbose
+
+# Terminal 2: Start ngrok tunnel
+ngrok http 8000
+```
+
+Then restart with the ngrok URL so OAuth metadata resolves:
+
+```bash
+fastn-mcp --shttp --port 8000 \
+  --server-url https://abc123.ngrok-free.dev \
+  --verbose
+```
+
+For production, deploy with Docker behind a reverse proxy with a real domain.
 
 ## Development
 
@@ -398,7 +390,7 @@ Fastn provides 250+ pre-built connectors including:
 
 **Finance:** Stripe, QuickBooks, Xero
 
-**And 200+ more** — browse the full catalog at [app.ucl.dev](https://app.ucl.dev)
+**And 200+ more** — browse the full catalog at [fastn.ai/integrations](https://fastn.ai/integrations)
 
 ## License
 
