@@ -35,7 +35,7 @@ from fastn_mcp.server import (
     _handle_execute_tool as execute_tool,
     _handle_list_flows as list_flows,
     _handle_find_tools as find_tools,
-    _handle_discover_tools as discover_tools,
+    _handle_list_connectors as list_connectors,
     _handle_configure_custom_auth as configure_custom_auth,
     _handle_list_skills as list_skills,
     _handle_list_projects as list_projects,
@@ -85,9 +85,9 @@ def _mock_client(**namespace_mocks):
     client.connections.initiate = namespace_mocks.get("connections_initiate", AsyncMock(return_value={}))
     client.connections.status = namespace_mocks.get("connections_status", AsyncMock(return_value={}))
 
-    # Connectors catalog (sync — not async)
+    # Connectors catalog (async — calls GraphQL API)
     client.connectors = MagicMock()
-    client.connectors.list = namespace_mocks.get("connectors_list", MagicMock(return_value=[]))
+    client.connectors.list = namespace_mocks.get("connectors_list", AsyncMock(return_value=[]))
 
     # Skills namespace
     client.skills = MagicMock()
@@ -461,45 +461,48 @@ class TestFindTools:
 
 
 # ---------------------------------------------------------------------------
-# discover_tools tests
+# list_connectors tests
 # ---------------------------------------------------------------------------
 
-class TestDiscoverTools:
+class TestListConnectors:
     @pytest.mark.asyncio
     async def test_success_returns_all(self):
-        """discover_tools returns all connectors with connect_url."""
+        """list_connectors returns all connectors with connect_url."""
         mock_connectors = [
             {"name": "slack", "display_name": "Slack", "category": "messaging", "tool_count": 12},
             {"name": "jira", "display_name": "Jira", "category": "project-management", "tool_count": 8},
         ]
-        client = _mock_client(connectors_list=MagicMock(return_value=mock_connectors))
+        client = _mock_client(connectors_list=AsyncMock(return_value=mock_connectors))
 
         with patch("fastn_mcp.server._get_client", return_value=client):
-            result = await discover_tools({})
+            result = await list_connectors({})
 
         data = _parse_result(result)
         assert data["total"] == 2
         assert len(data["connectors"]) == 2
         assert data["connectors"][0]["name"] == "slack"
         assert data["connectors"][1]["name"] == "jira"
-        # Each connector has connect_url with workspace/agent path
+        # Each connector has a deep link with query param for the connector name
         assert "app.ucl.dev" in data["connectors"][0]["connect_url"]
         assert "workspace_123" in data["connectors"][0]["connect_url"]
+        assert "open=managetools" in data["connectors"][0]["connect_url"]
+        assert "query=Slack" in data["connectors"][0]["connect_url"]
+        assert "query=Jira" in data["connectors"][1]["connect_url"]
         # Only name + connect_url — no extra fields
         assert set(data["connectors"][0].keys()) == {"name", "connect_url"}
 
     @pytest.mark.asyncio
     async def test_filter_by_query(self):
-        """discover_tools filters connectors by query."""
+        """list_connectors filters connectors by query."""
         mock_connectors = [
             {"name": "slack", "display_name": "Slack", "category": "messaging", "tool_count": 12},
             {"name": "jira", "display_name": "Jira", "category": "project-management", "tool_count": 8},
             {"name": "gmail", "display_name": "Gmail", "category": "email", "tool_count": 5},
         ]
-        client = _mock_client(connectors_list=MagicMock(return_value=mock_connectors))
+        client = _mock_client(connectors_list=AsyncMock(return_value=mock_connectors))
 
         with patch("fastn_mcp.server._get_client", return_value=client):
-            result = await discover_tools({"query": "jira"})
+            result = await list_connectors({"query": "jira"})
 
         data = _parse_result(result)
         assert data["total"] == 1
@@ -507,14 +510,14 @@ class TestDiscoverTools:
 
     @pytest.mark.asyncio
     async def test_filter_by_display_name(self):
-        """discover_tools matches query against display_name too."""
+        """list_connectors matches query against display_name too."""
         mock_connectors = [
             {"name": "ms_teams", "display_name": "Microsoft Teams", "category": "messaging", "tool_count": 6},
         ]
-        client = _mock_client(connectors_list=MagicMock(return_value=mock_connectors))
+        client = _mock_client(connectors_list=AsyncMock(return_value=mock_connectors))
 
         with patch("fastn_mcp.server._get_client", return_value=client):
-            result = await discover_tools({"query": "Microsoft"})
+            result = await list_connectors({"query": "Microsoft"})
 
         data = _parse_result(result)
         assert data["total"] == 1
@@ -522,21 +525,21 @@ class TestDiscoverTools:
 
     @pytest.mark.asyncio
     async def test_auth_error_propagates(self):
-        """discover_tools propagates AuthError to centralized handler."""
-        client = _mock_client(connectors_list=MagicMock(side_effect=AuthError("Token expired")))
+        """list_connectors propagates AuthError to centralized handler."""
+        client = _mock_client(connectors_list=AsyncMock(side_effect=AuthError("Token expired")))
 
         with patch("fastn_mcp.server._get_client", return_value=client), \
              pytest.raises(AuthError):
-            await discover_tools({})
+            await list_connectors({})
 
     @pytest.mark.asyncio
     async def test_closes_client(self):
-        """discover_tools always closes the client even on error."""
-        client = _mock_client(connectors_list=MagicMock(side_effect=FastnError("boom")))
+        """list_connectors always closes the client even on error."""
+        client = _mock_client(connectors_list=AsyncMock(side_effect=FastnError("boom")))
 
         with patch("fastn_mcp.server._get_client", return_value=client), \
              pytest.raises(FastnError):
-            await discover_tools({})
+            await list_connectors({})
 
         client.close.assert_called_once()
 
@@ -3048,14 +3051,14 @@ class TestPerModeServers:
         """UCL tool list contains exactly the expected tools."""
         ucl_tools = [t for t in TOOLS if t.name in UCL_TOOL_NAMES]
         names = {t.name for t in ucl_tools}
-        assert names == {"find_tools", "execute_tool", "discover_tools", "list_skills", "list_projects"}
+        assert names == {"find_tools", "execute_tool", "list_connectors", "list_skills", "list_projects"}
 
     @pytest.mark.asyncio
     async def test_ucl_tools_no_proj_correct(self):
         """UCL-with-project tool list excludes list_projects."""
         ucl_no_proj = [t for t in TOOLS if t.name in (UCL_TOOL_NAMES - {"list_projects"})]
         names = {t.name for t in ucl_no_proj}
-        assert names == {"find_tools", "execute_tool", "discover_tools", "list_skills"}
+        assert names == {"find_tools", "execute_tool", "list_connectors", "list_skills"}
         assert "list_projects" not in names
 
     @pytest.mark.asyncio
@@ -3068,4 +3071,4 @@ class TestPerModeServers:
 
     def test_ucl_tool_names_constant(self):
         """UCL_TOOL_NAMES contains exactly the expected tool names."""
-        assert UCL_TOOL_NAMES == {"find_tools", "execute_tool", "discover_tools", "list_skills", "list_projects"}
+        assert UCL_TOOL_NAMES == {"find_tools", "execute_tool", "list_connectors", "list_skills", "list_projects"}

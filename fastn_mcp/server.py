@@ -2,7 +2,7 @@
 
 Exposes MCP tools for AI agents and apps (Claude Desktop, Cursor, Lovable, and any MCP client):
 
-  UCL:    find_tools, execute_tool, discover_tools, list_skills, list_projects
+  UCL:    find_tools, execute_tool, list_connectors, list_skills, list_projects
   Agent:  list_flows, run_flow, delete_flow, create_flow*, update_flow*,
           configure_custom_auth
 
@@ -58,9 +58,11 @@ _SERVER_INSTRUCTIONS = (
     "Fastn — 250+ pre-built connectors (Stripe, Slack, Jira, Salesforce, HubSpot, "
     "Postgres, and more) with managed OAuth, sub-second execution, and multi-step "
     "flow orchestration. "
-    "Workflow: find_tools → execute_tool. "
-    "If find_tools returns nothing, call discover_tools to check if the connector "
-    "exists but is not yet connected — show the user the connect_url. "
+    "Workflow: "
+    "To browse or list connectors → list_connectors. "
+    "To execute an action → find_tools → execute_tool. "
+    "If find_tools returns nothing relevant → list_connectors (connector may need connecting). "
+    "If any tool returns WORKSPACE_NOT_SET → list_projects, then pass project_id. "
     "For multi-step automations use create_flow, then trigger with run_flow. "
     "When generating backend code (Edge Functions, API routes), call Fastn REST API "
     "at https://live.fastn.ai/api/ucl/executeTool with headers x-fastn-api-key and "
@@ -90,7 +92,7 @@ _server_mode: str = "agent"
 _server_project_id: str | None = None
 _server_skill_id: str | None = None
 
-UCL_TOOL_NAMES = {"find_tools", "execute_tool", "discover_tools", "list_skills", "list_projects"}
+UCL_TOOL_NAMES = {"find_tools", "execute_tool", "list_connectors", "list_skills", "list_projects"}
 
 # Request-scoped project_id — set per-connection (SSE) or per-request (shttp).
 _request_project_id: ContextVar[str | None] = ContextVar("_request_project_id", default=None)
@@ -252,21 +254,19 @@ async def _sdk_client(arguments: Dict[str, Any]):
 TOOLS = [
     # =====================================================================
     # UCL TOOLS
-    # Workflow: find_tools → execute_tool
-    # Fallback: discover_tools → prompt user to connect at app.ucl.dev
+    # Browse: list_connectors
+    # Execute: find_tools → execute_tool
     # =====================================================================
     Tool(
         name="find_tools",
         description=(
-            "ALWAYS call this first when the user wants to use any "
-            "connector tool (send message, create ticket, send email, "
-            "etc). Searches for tools that are active and connected in "
-            "this project. Returns matching tools with actionId and "
-            "inputSchema. Next step: pass the actionId to execute_tool. "
-            "IMPORTANT: If no results are returned, you MUST immediately "
-            "call discover_tools to check if the connector exists but "
-            "is not yet connected — never tell the user something is "
-            "unavailable without checking discover_tools first."
+            "Search for connector tools to perform a specific action "
+            "(send message, create ticket, query database, send email, "
+            "etc). Returns tools that are active and connected in this "
+            "project with actionId and inputSchema. Next step: pass the "
+            "actionId to execute_tool. If no relevant results, call "
+            "list_connectors — the connector may exist but not be "
+            "connected yet."
         ),
         inputSchema={
             "type": "object",
@@ -321,15 +321,16 @@ TOOLS = [
         },
     ),
     Tool(
-        name="discover_tools",
+        name="list_connectors",
         description=(
-            "Fallback: call this automatically when find_tools returns no "
-            "results. Browses all available connectors (200+) in the "
-            "project, including ones not yet connected. Returns connector "
-            "names and a connect_url. If the user's requested connector "
-            "exists but is not connected, show them the connect_url so "
-            "they can enable it, then retry find_tools. Use the query "
-            "parameter to filter by connector name (e.g. 'teams', 'jira')."
+            "Browse all available connectors (200+) including Slack, "
+            "Jira, GitHub, Salesforce, Gmail, Stripe, and more. Use this "
+            "when the user asks what connectors or integrations are "
+            "available, or to check if a specific connector exists. "
+            "Returns connector names and a connect_url to enable them. "
+            "Also call this when find_tools returns no relevant results "
+            "— the connector may need connecting first. Use query to "
+            "filter by name (e.g. 'teams', 'jira')."
         ),
         inputSchema={
             "type": "object",
@@ -357,10 +358,11 @@ TOOLS = [
     Tool(
         name="list_projects",
         description=(
-            "List available projects for the authenticated user. Use this "
-            "when you get PROJECT_NOT_SET errors or the user has multiple "
-            "projects. Returns project IDs and names — pass the selected "
-            "ID as project_id in subsequent tool calls."
+            "List available projects (workspaces) for the authenticated "
+            "user. Call this when any tool returns a WORKSPACE_NOT_SET "
+            "error, or when the user wants to switch projects. Returns "
+            "project IDs and names — pass the selected project_id in "
+            "subsequent tool calls."
         ),
         inputSchema={
             "type": "object",
@@ -564,7 +566,11 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
         return result
     except ConfigError as exc:
         logger.warning("Tool config error: %s | %s", name, exc)
-        return _error_result("WORKSPACE_NOT_SET", str(exc))
+        return _error_result(
+            "WORKSPACE_NOT_SET",
+            "No project selected. Call list_projects to see available "
+            "projects, then pass the chosen project_id in your next tool call.",
+        )
     except AuthError as exc:
         logger.warning("Tool auth error: %s | %s", name, exc)
         return _error_result("INVALID_TOKEN", str(exc))
@@ -649,12 +655,16 @@ async def _handle_find_tools(arguments: dict) -> list[TextContent]:
         return _success_result({"tools": tools, "total": len(tools)})
 
 
-async def _handle_discover_tools(arguments: dict) -> list[TextContent]:
+async def _handle_list_connectors(arguments: dict) -> list[TextContent]:
     """Browse all available connectors in the project."""
     async with _sdk_client(arguments) as client:
         workspace_id = client._config.resolve_project_id()
-        agent_id = arguments.get("project_id") or workspace_id
-        connectors = client.connectors.list()
+        skill_id = (
+            _request_skill_id.get()
+            or _server_skill_id
+            or workspace_id
+        )
+        connectors = await client.connectors.list()
         query = arguments.get("query", "")
         if query:
             q = query.lower()
@@ -662,8 +672,14 @@ async def _handle_discover_tools(arguments: dict) -> list[TextContent]:
                 c for c in connectors
                 if q in c["name"].lower() or q in c.get("display_name", "").lower()
             ]
-        connect_url = f"https://app.ucl.dev/projects/{workspace_id}/ucl/{agent_id}"
-        results = [{"name": c["name"], "connect_url": connect_url} for c in connectors]
+        base_url = f"https://app.ucl.dev/projects/{workspace_id}/ucl/{skill_id}"
+        results = [
+            {
+                "name": c["name"],
+                "connect_url": f"{base_url}?open=managetools&query={c.get('display_name') or c['name']}",
+            }
+            for c in connectors
+        ]
         return _success_result({"connectors": results, "total": len(results)})
 
 
@@ -708,15 +724,32 @@ async def _handle_list_skills(arguments: dict) -> list[TextContent]:
 
 async def _handle_list_projects(arguments: dict) -> list[TextContent]:
     """List projects available to the authenticated user."""
-    async with _sdk_client(arguments) as client:
-        projects = await client.projects.list()
-        return _success_result({"projects": projects, "total": len(projects)})
+    try:
+        async with _sdk_client(arguments) as client:
+            projects = await client.projects.list()
+            return _success_result({"projects": projects, "total": len(projects)})
+    except ConfigError:
+        # No project set — create a minimal client with just the auth token.
+        # list_projects is the tool users call to FIX the missing project,
+        # so it must work without one.
+        auth_token, _ = _resolve_auth_token(arguments)
+        if not auth_token:
+            return _error_result(
+                "INVALID_TOKEN",
+                "No authentication token available. Authenticate first.",
+            )
+        client = AsyncFastnClient(auth_token=auth_token, verbose=_verbose)
+        try:
+            projects = await client.projects.list()
+            return _success_result({"projects": projects, "total": len(projects)})
+        finally:
+            await client.close()
 
 
 # Tool name → handler mapping
 _TOOL_HANDLERS = {
     "find_tools": _handle_find_tools,
-    "discover_tools": _handle_discover_tools,
+    "list_connectors": _handle_list_connectors,
     "execute_tool": _handle_execute_tool,
     "list_flows": _handle_list_flows,
     "run_flow": _handle_run_flow,

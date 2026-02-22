@@ -18,6 +18,7 @@ Endpoints (mode via URL path):
 import argparse
 import asyncio
 import logging
+import os
 
 from fastn_mcp.server import main
 
@@ -51,25 +52,25 @@ def cli():
     # Server options
     parser.add_argument(
         "--host",
-        default="0.0.0.0",
-        help="Bind address (default: 0.0.0.0)",
+        default=os.environ.get("FASTN_MCP_HOST", "0.0.0.0"),
+        help="Bind address (default: 0.0.0.0, env: FASTN_MCP_HOST)",
     )
     parser.add_argument(
         "--port",
         type=int,
-        default=8000,
-        help="Port (default: 8000)",
+        default=int(os.environ.get("FASTN_MCP_PORT", "8000")),
+        help="Port (default: 8000, env: FASTN_MCP_PORT)",
     )
     parser.add_argument(
         "--no-auth",
         action="store_true",
-        default=False,
-        help="Disable OAuth authentication (for local testing)",
+        default=os.environ.get("FASTN_MCP_NO_AUTH", "").lower() in ("true", "1", "yes"),
+        help="Disable OAuth authentication (for local testing, env: FASTN_MCP_NO_AUTH)",
     )
     parser.add_argument(
         "--server-url",
-        default=None,
-        help="Public URL of this server (for OAuth metadata). Auto-detected if not set.",
+        default=os.environ.get("FASTN_MCP_SERVER_URL"),
+        help="Public URL of this server (for OAuth metadata, env: FASTN_MCP_SERVER_URL)",
     )
     parser.add_argument(
         "--mode",
@@ -98,8 +99,8 @@ def cli():
     parser.add_argument(
         "-v", "--verbose",
         action="store_true",
-        default=False,
-        help="Enable verbose logging (tool I/O, SDK HTTP calls, request headers)",
+        default=os.environ.get("FASTN_MCP_VERBOSE", "").lower() in ("true", "1", "yes"),
+        help="Enable verbose logging (env: FASTN_MCP_VERBOSE)",
     )
     args = parser.parse_args()
 

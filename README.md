@@ -51,10 +51,10 @@ Use the hosted server (`mcp.live.fastn.ai`) or your self-hosted instance. Each p
 
 | Endpoint | Tools |
 |----------|-------|
-| `/shttp` | All 11 tools: `find_tools`, `execute_tool`, `discover_tools`, `list_skills`, `list_projects`, `list_flows`, `run_flow`, `delete_flow`, `create_flow`, `update_flow`, `configure_custom_auth` |
-| `/shttp/ucl` | 5 tools: `find_tools`, `execute_tool`, `discover_tools`, `list_skills`, `list_projects` |
-| `/shttp/ucl/{project_id}` | 4 tools: `find_tools`, `execute_tool`, `discover_tools`, `list_skills` |
-| `/shttp/ucl/{project_id}/{skill_id}` | 3 tools: `find_tools`, `execute_tool`, `discover_tools` |
+| `/shttp` | All 11 tools: `find_tools`, `execute_tool`, `list_connectors`, `list_skills`, `list_projects`, `list_flows`, `run_flow`, `delete_flow`, `create_flow`, `update_flow`, `configure_custom_auth` |
+| `/shttp/ucl` | 5 tools: `find_tools`, `execute_tool`, `list_connectors`, `list_skills`, `list_projects` |
+| `/shttp/ucl/{project_id}` | 4 tools: `find_tools`, `execute_tool`, `list_connectors`, `list_skills` |
+| `/shttp/ucl/{project_id}/{skill_id}` | 3 tools: `find_tools`, `execute_tool`, `list_connectors` |
 | `/sse`, `/sse/ucl`, etc. | Same pattern for SSE transport |
 
 **Examples with the hosted server:**
@@ -144,11 +144,11 @@ The server exposes these tools to AI agents:
 |------|-------------|
 | `find_tools` | Search for available connector tools by natural language prompt. Returns matching tools with IDs and input schemas. |
 | `execute_tool` | Execute a connector tool by its ID with parameters. Returns the result directly. |
-| `discover_tools` | Browse all 250+ available connectors in the registry, including ones not yet connected. |
+| `list_connectors` | Browse all 250+ available connectors in the registry, including ones not yet connected. |
 | `list_skills` | List available skills in the project. |
 | `list_projects` | List available projects for the authenticated user. |
 
-**Workflow:** `find_tools` → `execute_tool`. If `find_tools` returns nothing, call `discover_tools` to check if the connector exists but isn't connected yet.
+**Workflow:** Browse connectors → `list_connectors`. Execute an action → `find_tools` → `execute_tool`. If `find_tools` returns nothing relevant → `list_connectors` (connector may need connecting).
 
 ### Flow Management
 
@@ -178,7 +178,7 @@ MCP Protocol (stdio / SSE / Streamable HTTP)
 ┌─────────────────────────────┐
 │   Fastn MCP Server          │
 │   ┌───────────────────────┐ │
-│   │ Tool Discovery        │ │  find_tools, discover_tools
+│   │ Tool Discovery        │ │  find_tools, list_connectors
 │   │ Tool Execution        │ │  execute_tool
 │   │ Flow Management       │ │  list/run/delete/create flows
 │   │ Auth & Config         │ │  OAuth 2.1, custom JWT
