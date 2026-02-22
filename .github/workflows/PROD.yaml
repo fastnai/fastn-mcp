@@ -26,6 +26,8 @@ jobs:
           project_id: ${{ env.GCP_PROJECT_ID }}
           service_account_key: ${{ env.GCP_SA_KEY }}
           export_default_credentials: true
+      - name: Configure Docker
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 
       # Build Docker image
       - name: Build Docker image
