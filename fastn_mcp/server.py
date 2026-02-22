@@ -117,6 +117,24 @@ def _parse_mode_from_path(path: str) -> tuple[str, str | None, str | None]:
     return "agent", None, None
 
 
+# Tools available with API key authentication (no OAuth session)
+API_KEY_TOOLS = {"find_tools", "execute_tool"}
+
+
+def _is_api_key_auth() -> bool:
+    """Check if the current request uses API key authentication."""
+    if _oauth_provider is None:
+        return False
+    try:
+        from mcp.server.auth.middleware.auth_context import get_access_token
+        mcp_token_obj = get_access_token()
+        if mcp_token_obj is not None and mcp_token_obj.client_id == "api-key":
+            return True
+    except (LookupError, AttributeError, TypeError):
+        pass
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Helpers: token resolution + SDK client creation
 # ---------------------------------------------------------------------------
@@ -144,7 +162,12 @@ def _resolve_auth_token(arguments: Dict[str, Any]) -> tuple[str | None, str | No
                 kc_token = _oauth_provider.get_keycloak_token(mcp_token_obj.token)
                 if kc_token:
                     auth_token = kc_token
-                    token_source = "oauth"
+                    # Detect API key: identity-mapped (kc_token == mcp token)
+                    # and hex format (not a JWT which has dots)
+                    if kc_token == mcp_token_obj.token and "." not in kc_token:
+                        token_source = "api-key"
+                    else:
+                        token_source = "oauth"
         except (LookupError, AttributeError, TypeError):
             pass  # Fall back to header / arguments
 
@@ -212,8 +235,15 @@ def _get_client(arguments: Dict[str, Any]) -> AsyncFastnClient:
     )
     tenant_id = arguments.get("tenant_id", "")
 
+    # When the Bearer token is a Fastn API key, pass it as api_key
+    # so the SDK sends it as x-fastn-api-key header (not Bearer).
+    api_key = arguments.get("api_key")
+    if token_source == "api-key":
+        api_key = auth_token
+        auth_token = None
+
     return AsyncFastnClient(
-        api_key=arguments.get("api_key"),
+        api_key=api_key,
         project_id=project_id,
         auth_token=auth_token,
         tenant_id=tenant_id,
@@ -518,6 +548,8 @@ async def handle_list_tools() -> list[Tool]:
 
     HTTP transports use per-path Server instances instead.
     """
+    if _is_api_key_auth():
+        return [t for t in TOOLS if t.name in API_KEY_TOOLS]
     if _server_mode == "ucl":
         names = UCL_TOOL_NAMES
         if _server_project_id:
@@ -554,6 +586,15 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
         json.dumps(_redact(arguments), default=str),
         json.dumps(_redact(request_headers)),
     )
+
+    if _is_api_key_auth() and name not in API_KEY_TOOLS:
+        result = _error_result(
+            "TOOL_NOT_AVAILABLE",
+            f"Tool '{name}' is not available with API key authentication. "
+            "Only find_tools and execute_tool are supported.",
+        )
+        logger.warning("Tool response: %s | %s", name, result[0].text)
+        return result
 
     handler = _TOOL_HANDLERS.get(name)
     if handler is None:
@@ -783,6 +824,8 @@ def _create_mcp_server(tools: list[Tool]) -> Server:
 
     @srv.list_tools()
     async def _list_tools() -> list[Tool]:
+        if _is_api_key_auth():
+            return [t for t in tools if t.name in API_KEY_TOOLS]
         return tools
 
     @srv.call_tool()

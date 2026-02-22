@@ -857,6 +857,21 @@ class FastnOAuthProvider:
             logger.debug("load_access_token: Path 2 JWT valid, azp=%s", claims.get("azp"))
             return access_token
 
+        # Path 2.5: Fastn API key — hex string, not a JWT (no dots)
+        # Accept provisionally; the Fastn backend validates when the SDK calls it.
+        if "." not in token and all(c in "0123456789abcdef" for c in token.lower()):
+            access_token = AccessToken(
+                token=token,
+                client_id="api-key",
+                scopes=["read", "write"],
+                expires_at=int(time.time()) + ACCESS_TOKEN_LIFETIME,
+            )
+            self._access_tokens[token] = access_token
+            # Identity mapping — _resolve_auth_token reads from _keycloak_tokens
+            self._keycloak_tokens[token] = token
+            logger.debug("load_access_token: Path 2.5 API key accepted, token=%.8s...", token)
+            return access_token
+
         # Path 3: Try as Keycloak refresh token (opaque string → exchange for access token)
         # Refresh tokens are bound to their issuing client — try fastn-oauth, then fastn-sdk.
         # After the first success, azp from the JWT is stored for future re-refreshes.
