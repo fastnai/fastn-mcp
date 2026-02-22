@@ -166,14 +166,19 @@ def _resolve_auth_token(arguments: Dict[str, Any]) -> tuple[str | None, str | No
 
 
 def _resolve_request_headers() -> dict[str, str]:
-    """Extract Fastn headers from the current HTTP request, if any."""
+    """Extract Fastn headers from the current HTTP request, if any.
+
+    Reads x-project-id and x-tenant-id from request headers.
+    API keys and auth tokens are passed via the Authorization header
+    and resolved by _resolve_auth_token.
+    """
     try:
         ctx = server.request_context
         if ctx.request is not None:
             headers = ctx.request.headers
             return {
-                "api_key": headers.get("x-api-key", ""),
                 "project_id": headers.get("x-project-id", ""),
+                "tenant_id": headers.get("x-tenant-id", ""),
             }
     except LookupError:
         pass  # No request context (e.g. stdio transport)
@@ -197,25 +202,20 @@ def _get_client(arguments: Dict[str, Any]) -> AsyncFastnClient:
         token_source, auth_token is not None, token_preview,
     )
 
-    # Default tenant_id to "" (empty) when not provided by the tool call.
-    # The SDK falls back to .fastn/config.json which may contain
-    # "organization" — that value is only valid for GraphQL control-plane
-    # queries (projects.list), not data-plane API calls.
-    #
     # Resolution priority: tool arguments > request headers > request contextvar > startup config > SDK defaults
-    api_key = arguments.get("api_key") or req_headers.get("api_key")
     project_id = (
         arguments.get("project_id")
         or req_headers.get("project_id")
         or _request_project_id.get()
         or _server_project_id
     )
+    tenant_id = arguments.get("tenant_id") or req_headers.get("tenant_id") or ""
 
     return AsyncFastnClient(
-        api_key=api_key,
+        api_key=arguments.get("api_key"),
         project_id=project_id,
         auth_token=auth_token,
-        tenant_id=arguments.get("tenant_id", ""),
+        tenant_id=tenant_id,
         verbose=_verbose,
     )
 

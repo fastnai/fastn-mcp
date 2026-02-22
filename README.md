@@ -84,26 +84,9 @@ Standard MCP OAuth flow with PKCE. The server bridges to Fastn's identity provid
 }
 ```
 
-#### Bearer Token
+#### Token / API Key
 
-Pass a Fastn auth token via the `Authorization` header in your MCP client config:
-
-```json
-{
-  "mcpServers": {
-    "fastn": {
-      "url": "https://mcp.live.fastn.ai/shttp",
-      "headers": {
-        "Authorization": "Bearer <your-fastn-token>"
-      }
-    }
-  }
-}
-```
-
-#### API Key
-
-Pass your API key and project ID via headers in your MCP client config:
+Pass a Fastn auth token or API key via the `Authorization` header in your MCP client config:
 
 ```json
 {
@@ -111,15 +94,31 @@ Pass your API key and project ID via headers in your MCP client config:
     "fastn": {
       "url": "https://mcp.live.fastn.ai/shttp",
       "headers": {
-        "x-api-key": "<your-api-key>",
-        "x-project-id": "<your-project-id>"
+        "Authorization": "Bearer <your-token-or-api-key>"
       }
     }
   }
 }
 ```
 
-For local stdio transport, pass them as environment variables instead:
+You can also pass `x-project-id` and `x-tenant-id` headers for multi-tenant setups:
+
+```json
+{
+  "mcpServers": {
+    "fastn": {
+      "url": "https://mcp.live.fastn.ai/shttp",
+      "headers": {
+        "Authorization": "Bearer <your-token-or-api-key>",
+        "x-project-id": "<your-project-id>",
+        "x-tenant-id": "<your-tenant-id>"
+      }
+    }
+  }
+}
+```
+
+For local stdio transport, pass credentials as environment variables:
 
 ```json
 {
