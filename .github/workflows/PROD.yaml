@@ -27,12 +27,13 @@ jobs:
           service_account_key: ${{ env.GCP_SA_KEY }}
           install_components: 'gke-gcloud-auth-plugin'
           export_default_credentials: true
-      - name: Configure Docker
-        run: gcloud auth configure-docker us-central1-docker.pkg.dev
+    #   - name: Configure Docker
+    #     run: gcloud auth configure-docker us-central1-docker.pkg.dev
 
       # Build Docker image
       - name: Build Docker image
         run: |
+          gcloud auth configure-docker us-central1-docker.pkg.dev
           IMAGE=us-central1-docker.pkg.dev/fastn-prod/fastn/fastn-mcp:${{ github.sha }}
           docker build -t $IMAGE .
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
