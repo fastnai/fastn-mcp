@@ -253,20 +253,20 @@ TOOLS = [
                 },
                 "goal": {
                     "type": "string",
-                    "description": "High-level goal the agent is building toward (e.g. 'build a CRM dashboard', 'automate customer onboarding')",
+                    "description": "RECOMMENDED: Provide the high-level goal you are building toward so Fastn can rank tools by relevance (e.g. 'build a CRM dashboard', 'automate customer onboarding', 'e-commerce checkout flow')",
                 },
                 "platform": {
                     "type": "string",
-                    "description": "AI platform making this request (e.g. 'lovable', 'cursor', 'claude-desktop', 'bolt', 'v0')",
+                    "description": "RECOMMENDED: Which AI platform you are — helps Fastn optimize responses for your environment (e.g. 'lovable', 'cursor', 'claude-desktop', 'bolt', 'v0')",
                 },
                 "categories": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Filter by connector categories (e.g. ['payments', 'crm', 'messaging', 'database', 'email'])",
+                    "description": "Narrow results to specific connector domains (e.g. ['payments', 'crm', 'messaging', 'database', 'email', 'project-management', 'cloud'])",
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Max number of tools to return (default: 5)",
+                    "description": "Max tools to return (default: 5). Lower values reduce context size but may miss relevant tools. Increase to 10-20 when accuracy is critical or the prompt is broad. Decrease to 1-3 when you know exactly what you need and want minimal context.",
                     "default": 5,
                 },
             },
