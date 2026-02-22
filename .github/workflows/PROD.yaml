@@ -30,7 +30,7 @@ jobs:
       # Build Docker image
       - name: Build Docker image
         run: |
-          IMAGE=gcr.io/${{ env.GCP_PROJECT_ID }}/fastn-mcp:${{ github.sha }}
+          IMAGE=us-central1-docker.pkg.dev/fastn-prod/fastn/fastn-mcp:${{ github.sha }}
           docker build -t $IMAGE .
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
 
