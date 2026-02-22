@@ -35,9 +35,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://fastn.dev"
+Homepage = "https://fastn.ai"
 Repository = "https://github.com/fastnai/fastn-mcp"
-Documentation = "https://docs.fastn.dev"
+Documentation = "https://docs.fastn.ai"
 Issues = "https://github.com/fastnai/fastn-mcp/issues"
 
 [project.scripts]

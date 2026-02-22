@@ -398,7 +398,7 @@ MIT
 
 ## Links
 
-- [Fastn Platform](https://fastn.dev)
+- [Fastn Platform](https://fastn.ai)
 - [Fastn SDK](https://github.com/fastnai/fastn-sdk)
 - [MCP Specification](https://modelcontextprotocol.io/)
-- [Documentation](https://docs.fastn.dev)
+- [Documentation](https://docs.fastn.ai)

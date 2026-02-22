@@ -23,7 +23,7 @@ RUN pip wheel --no-cache-dir --wheel-dir /wheels \
 # ── Runtime stage ─────────────────────────────────────────────────────
 FROM python:3.12-slim
 
-LABEL maintainer="Fastn <support@fastn.dev>"
+LABEL maintainer="Fastn <support@fastn.ai>"
 LABEL description="Fastn MCP Server — MCP gateway for 250+ enterprise integrations"
 LABEL org.opencontainers.image.source="https://github.com/fastnai/fastn-mcp"
 
