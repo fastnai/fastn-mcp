@@ -101,7 +101,7 @@ Pass a Fastn auth token or API key via the `Authorization` header in your MCP cl
 }
 ```
 
-You can also pass `x-project-id` and `x-tenant-id` headers for multi-tenant setups:
+You can also pass `x-project-id` to scope requests to a specific project:
 
 ```json
 {
@@ -110,8 +110,7 @@ You can also pass `x-project-id` and `x-tenant-id` headers for multi-tenant setu
       "url": "https://mcp.live.fastn.ai/shttp",
       "headers": {
         "Authorization": "Bearer <your-token-or-api-key>",
-        "x-project-id": "<your-project-id>",
-        "x-tenant-id": "<your-tenant-id>"
+        "x-project-id": "<your-project-id>"
       }
     }
   }

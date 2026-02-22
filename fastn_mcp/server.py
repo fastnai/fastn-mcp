@@ -168,7 +168,7 @@ def _resolve_auth_token(arguments: Dict[str, Any]) -> tuple[str | None, str | No
 def _resolve_request_headers() -> dict[str, str]:
     """Extract Fastn headers from the current HTTP request, if any.
 
-    Reads x-project-id and x-tenant-id from request headers.
+    Reads x-project-id from request headers.
     API keys and auth tokens are passed via the Authorization header
     and resolved by _resolve_auth_token.
     """
@@ -178,7 +178,6 @@ def _resolve_request_headers() -> dict[str, str]:
             headers = ctx.request.headers
             return {
                 "project_id": headers.get("x-project-id", ""),
-                "tenant_id": headers.get("x-tenant-id", ""),
             }
     except LookupError:
         pass  # No request context (e.g. stdio transport)
@@ -209,7 +208,7 @@ def _get_client(arguments: Dict[str, Any]) -> AsyncFastnClient:
         or _request_project_id.get()
         or _server_project_id
     )
-    tenant_id = arguments.get("tenant_id") or req_headers.get("tenant_id") or ""
+    tenant_id = arguments.get("tenant_id", "")
 
     return AsyncFastnClient(
         api_key=arguments.get("api_key"),
