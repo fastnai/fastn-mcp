@@ -1,6 +1,6 @@
 """Fastn MCP Server — stateless translation layer wrapping the Fastn SDK.
 
-Exposes MCP tools for vibe coding platforms (Lovable, Bolt, v0, Cursor):
+Exposes MCP tools for AI agents and apps (Claude Desktop, Cursor, Lovable, and any MCP client):
 
   UCL:    find_tools, execute_tool, discover_tools, list_skills, list_projects
   Agent:  list_flows, run_flow, delete_flow, create_flow*, update_flow*,

@@ -1,8 +1,8 @@
 # Fastn MCP Server
 
-**The fastest way to give AI agents access to 250+ enterprise integrations.**
+**Give your AI agents and apps instant, secure access to 250+ enterprise systems.**
 
-Fastn MCP Server is a production-ready [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) gateway that connects AI coding assistants and agents to Slack, Jira, GitHub, Salesforce, HubSpot, Postgres, and 200+ more services — with centralized auth, observability, and sub-second execution.
+Fastn MCP Server is a production-ready [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) gateway that connects AI agents and apps to Slack, Jira, GitHub, Salesforce, HubSpot, Postgres, and 200+ more services — with fully managed auth, governed access, and sub-second execution.
 
 Built on the [Fastn SDK](https://github.com/fastnai/fastn-sdk), this server exposes MCP tools that any compatible AI platform can use out of the box.
 
@@ -12,7 +12,9 @@ Built on the [Fastn SDK](https://github.com/fastnai/fastn-sdk), this server expo
 |---------|-------------|
 | **250+ Connectors** | Slack, Jira, GitHub, Salesforce, HubSpot, Postgres, Stripe, Notion, Linear, and more |
 | **MCP Native** | Works with Claude Desktop, Cursor, Lovable, Bolt, v0, and any MCP-compatible client |
-| **Centralized Auth** | OAuth 2.1, API keys, and multi-tenant credential management — no per-tool auth setup |
+| **Fully Managed Auth** | OAuth 2.1 for every connector — no token management, no app registration, no refresh handling |
+| **Governed Access** | Role-based permissions, audit trails, and enterprise compliance controls |
+| **SOC 2 Certified** | Enterprise-grade security and compliance built into the platform |
 | **Sub-Second Execution** | Direct API calls through the Fastn platform with built-in caching and connection pooling |
 | **Multiple Transports** | stdio (local), SSE, and Streamable HTTP for any deployment model |
 | **Production Ready** | Docker support, health checks, structured logging, and OAuth 2.1 protected resource metadata |
@@ -36,14 +38,11 @@ pip install -e ".[dev]"
 
 ### 2. Configure
 
-Set your Fastn credentials:
-
-```bash
-export FASTN_API_KEY="your-api-key"
-export FASTN_PROJECT_ID="your-project-id"
-```
-
 Get your API key and project ID from [app.ucl.dev](https://app.ucl.dev).
+
+**For stdio (Claude Desktop, Cursor):** Pass credentials as environment variables in your MCP client config (see examples below).
+
+**For remote (SSE/shttp):** Clients authenticate via the built-in MCP OAuth 2.1 flow — no manual credential setup needed.
 
 ### 3. Run
 
@@ -70,13 +69,14 @@ docker run -p 8000:8000 --env-file .env fastn-mcp
 
 The server exposes these tools to AI agents:
 
-### Discovery & Execution
+### UCL Tools
 
 | Tool | Description |
 |------|-------------|
-| `find_tools` | Search for available tools by natural language prompt. Returns matching tools with IDs and input schemas. |
-| `execute_tool` | Execute a tool by its ID with parameters. Returns the result directly. |
+| `find_tools` | Search for available connector tools by natural language prompt. Returns matching tools with IDs and input schemas. |
+| `execute_tool` | Execute a connector tool by its ID with parameters. Returns the result directly. |
 | `discover_tools` | Browse all 250+ available connectors in the registry, including ones not yet connected. |
+| `list_skills` | List available skills in the project. |
 | `list_projects` | List available projects for the authenticated user. |
 
 **Workflow:** `find_tools` → `execute_tool`. If `find_tools` returns nothing, call `discover_tools` to check if the connector exists but isn't connected yet.
@@ -145,9 +145,10 @@ fastn-mcp --sse --shttp --port 8000
 
 | Endpoint | Tools Exposed |
 |----------|--------------|
-| `POST /shttp` | All tools (discovery + flows + config) |
-| `POST /shttp/ucl` | UCL tools only (4 tools) |
-| `POST /shttp/ucl/{project_id}` | UCL tools with pre-set project (3 tools) |
+| `POST /shttp` | All tools (UCL + flows + config) |
+| `POST /shttp/ucl` | UCL tools only (5 tools) |
+| `POST /shttp/ucl/{project_id}` | UCL tools with pre-set project (4 tools) |
+| `POST /shttp/ucl/{project_id}/{skill_id}` | UCL tools with pre-set project and skill (3 tools) |
 | `GET /sse`, `GET /sse/ucl`, etc. | Same pattern for SSE transport |
 
 ### Tool Mode (stdio)
@@ -155,15 +156,22 @@ fastn-mcp --sse --shttp --port 8000
 Filter tools in stdio mode:
 
 ```bash
-fastn-mcp --stdio --mode ucl              # UCL tools only
-fastn-mcp --stdio --mode ucl --project ID  # UCL tools + pre-set project
+fastn-mcp --stdio --mode ucl                          # UCL tools only
+fastn-mcp --stdio --mode ucl --project ID              # UCL tools + pre-set project
+fastn-mcp --stdio --mode ucl --project ID --skill ID   # UCL tools + pre-set project and skill
 ```
 
 ## Authentication
 
-### OAuth 2.1 (Production)
+### stdio (Local)
 
-The server implements RFC 9728 Protected Resource Metadata for OAuth 2.1:
+Credentials are passed as environment variables (`FASTN_API_KEY`, `FASTN_PROJECT_ID`) in the MCP client config. See Claude Desktop and Cursor examples below.
+
+### OAuth 2.1 (Remote)
+
+Remote transports (SSE, Streamable HTTP) use MCP OAuth 2.1 with PKCE. Clients authenticate through the standard OAuth flow — the server bridges to Fastn's identity provider automatically.
+
+The server implements RFC 9728 Protected Resource Metadata:
 
 ```bash
 fastn-mcp --sse --shttp --port 8000
@@ -178,7 +186,7 @@ fastn-mcp --sse --shttp --port 8000 --server-url https://mcp.example.com
 
 ### No Auth (Development)
 
-For local testing:
+For local testing of remote transports:
 
 ```bash
 fastn-mcp --sse --port 8000 --no-auth
@@ -201,7 +209,7 @@ docker compose up -d
 
 ### Environment Variables
 
-Create a `.env` file with your credentials:
+For Docker/CI deployments, create a `.env` file:
 
 ```bash
 # Required
@@ -262,7 +270,7 @@ The MCP endpoint is now available at:
 |----------|-----|
 | Streamable HTTP | `https://abc123.ngrok-free.dev/shttp` |
 | SSE | `https://abc123.ngrok-free.dev/sse` |
-| Discovery only | `https://abc123.ngrok-free.dev/shttp/ucl` |
+| UCL only | `https://abc123.ngrok-free.dev/shttp/ucl` |
 
 ### Docker + ngrok
 
@@ -339,10 +347,8 @@ fastn-mcp/
 │   ├── auth.py              # OAuth 2.1 provider (RFC 9728)
 │   └── tools/               # Tool utilities
 ├── tests/
-│   ├── test_server.py       # 180+ tests covering all tools and transports
+│   ├── test_server.py       # 185+ tests covering all tools and transports
 │   └── conftest.py          # Test fixtures
-├── docs/
-│   └── architecture.md      # Detailed architecture documentation
 ├── Dockerfile               # Production container
 ├── docker-compose.yml       # Docker Compose for deployment
 ├── pyproject.toml           # Python project configuration
@@ -368,6 +374,7 @@ Server:
 Mode:
   --mode {agent,ucl} Tool mode for stdio: "agent" (all tools) or "ucl" (UCL tools only)
   --project ID     Pre-set project ID for stdio
+  --skill ID       Pre-set skill ID for stdio (requires --project)
 
 Debug:
   -v, --verbose    Enable debug logging

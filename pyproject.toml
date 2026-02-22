@@ -1,7 +1,7 @@
 [project]
 name = "fastn-mcp-server"
 version = "0.1.0"
-description = "Fastn MCP Server — MCP gateway for 250+ enterprise integrations with centralized auth and sub-second execution"
+description = "Fastn MCP Server — secure MCP gateway for 250+ enterprise systems with fully managed auth, governed access, and sub-second execution"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
