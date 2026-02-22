@@ -1,0 +1,49 @@
+name: fastn-prod. Build and Deploy to Cloud Run
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/add-pipeline-deploy-cloudrun-prod
+
+env:
+    GCP_PROJECT_ID: fastn-prod
+    GCP_SA_KEY: ${{ secrets.FASTN_PROD_GOOGLE_APPLICATION_CREDENTIALS }}
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-24.04
+
+    steps:
+      # Checkout source
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Authenticate with GCP
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          service_account_key: ${{ env.GCP_SA_KEY }}
+          export_default_credentials: true
+
+      # Build Docker image
+      - name: Build Docker image
+        run: |
+          IMAGE=gcr.io/${{ env.GCP_PROJECT_ID }}/fastn-mcp:${{ github.sha }}
+          docker build -t $IMAGE .
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+
+      # Push Docker image
+      - name: Push Docker image
+        run: |
+          docker push $IMAGE
+
+      # Deploy to Cloud Run
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy fastn-app \
+            --image $IMAGE \
+            --platform managed \
+            --region us-central1 \
+            --allow-unauthenticated
