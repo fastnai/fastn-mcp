@@ -251,9 +251,18 @@ TOOLS = [
                     "type": "string",
                     "description": "Natural language description of what you want to do",
                 },
-                "task": {
+                "goal": {
                     "type": "string",
-                    "description": "High-level goal or task the agent is trying to accomplish (e.g. 'build a CRM dashboard', 'automate onboarding emails')",
+                    "description": "High-level goal the agent is building toward (e.g. 'build a CRM dashboard', 'automate customer onboarding')",
+                },
+                "platform": {
+                    "type": "string",
+                    "description": "AI platform making this request (e.g. 'lovable', 'cursor', 'claude-desktop', 'bolt', 'v0')",
+                },
+                "categories": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Filter by connector categories (e.g. ['payments', 'crm', 'messaging', 'database', 'email'])",
                 },
                 "limit": {
                     "type": "integer",
@@ -592,9 +601,14 @@ async def _handle_find_tools(arguments: dict) -> list[TextContent]:
     if not prompt:
         return _error_result("MISSING_PARAM", "prompt is required")
 
-    task = arguments.get("task")
-    if task:
-        logger.info("find_tools task: %s | prompt: %s", task, prompt)
+    goal = arguments.get("goal")
+    platform = arguments.get("platform")
+    categories = arguments.get("categories")
+    if goal or platform or categories:
+        logger.info(
+            "find_tools meta | goal: %s | platform: %s | categories: %s | prompt: %s",
+            goal, platform, categories, prompt,
+        )
 
     async with _sdk_client(arguments) as client:
         limit = arguments.get("limit", 5)
