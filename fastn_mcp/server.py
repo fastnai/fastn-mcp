@@ -165,9 +165,25 @@ def _resolve_auth_token(arguments: Dict[str, Any]) -> tuple[str | None, str | No
     return auth_token, token_source
 
 
+def _resolve_request_headers() -> dict[str, str]:
+    """Extract Fastn headers from the current HTTP request, if any."""
+    try:
+        ctx = server.request_context
+        if ctx.request is not None:
+            headers = ctx.request.headers
+            return {
+                "api_key": headers.get("x-api-key", ""),
+                "project_id": headers.get("x-project-id", ""),
+            }
+    except LookupError:
+        pass  # No request context (e.g. stdio transport)
+    return {}
+
+
 def _get_client(arguments: Dict[str, Any]) -> AsyncFastnClient:
     """Create an AsyncFastnClient from tool arguments."""
     auth_token, token_source = _resolve_auth_token(arguments)
+    req_headers = _resolve_request_headers()
 
     # Log token details for debugging INVALID_TOKEN errors
     token_preview = None
@@ -186,11 +202,17 @@ def _get_client(arguments: Dict[str, Any]) -> AsyncFastnClient:
     # "organization" — that value is only valid for GraphQL control-plane
     # queries (projects.list), not data-plane API calls.
     #
-    # project_id resolution: tool arguments > request contextvar > startup config > SDK defaults
-    project_id = arguments.get("project_id") or _request_project_id.get() or _server_project_id
+    # Resolution priority: tool arguments > request headers > request contextvar > startup config > SDK defaults
+    api_key = arguments.get("api_key") or req_headers.get("api_key")
+    project_id = (
+        arguments.get("project_id")
+        or req_headers.get("project_id")
+        or _request_project_id.get()
+        or _server_project_id
+    )
 
     return AsyncFastnClient(
-        api_key=arguments.get("api_key"),
+        api_key=api_key,
         project_id=project_id,
         auth_token=auth_token,
         tenant_id=arguments.get("tenant_id", ""),

@@ -68,24 +68,73 @@ https://mcp.live.fastn.ai/shttp/ucl/{project_id}/{skill_id}   # Pre-set project 
 
 ### Authentication
 
-The MCP server supports three authentication methods:
+The MCP server supports three authentication methods. Get your credentials from [app.ucl.dev](https://app.ucl.dev).
 
-**MCP OAuth 2.1** — Standard MCP OAuth flow with PKCE. The server bridges to Fastn's identity provider automatically. MCP clients that support OAuth (Claude Desktop, Cursor, Lovable) will handle this transparently — just connect and authenticate when prompted.
+#### MCP OAuth 2.1 (Recommended)
 
-**Bearer Token** — Pass a Fastn auth token directly via the `Authorization` header:
+Standard MCP OAuth flow with PKCE. The server bridges to Fastn's identity provider automatically. Just point your client at the URL — you'll be prompted to authenticate:
 
+```json
+{
+  "mcpServers": {
+    "fastn": {
+      "url": "https://mcp.live.fastn.ai/shttp"
+    }
+  }
+}
 ```
-Authorization: Bearer <your-fastn-token>
+
+#### Bearer Token
+
+Pass a Fastn auth token via the `Authorization` header in your MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "fastn": {
+      "url": "https://mcp.live.fastn.ai/shttp",
+      "headers": {
+        "Authorization": "Bearer <your-fastn-token>"
+      }
+    }
+  }
+}
 ```
 
-**API Key (stdio only)** — For local stdio transport, pass credentials as environment variables in the MCP client config:
+#### API Key
 
-```bash
-FASTN_API_KEY=your-api-key
-FASTN_PROJECT_ID=your-project-id
+Pass your API key and project ID via headers in your MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "fastn": {
+      "url": "https://mcp.live.fastn.ai/shttp",
+      "headers": {
+        "x-api-key": "<your-api-key>",
+        "x-project-id": "<your-project-id>"
+      }
+    }
+  }
+}
 ```
 
-Get your API key and project ID from [app.ucl.dev](https://app.ucl.dev).
+For local stdio transport, pass them as environment variables instead:
+
+```json
+{
+  "mcpServers": {
+    "fastn": {
+      "command": "fastn-mcp",
+      "args": ["--stdio"],
+      "env": {
+        "FASTN_API_KEY": "your-api-key",
+        "FASTN_PROJECT_ID": "your-project-id"
+      }
+    }
+  }
+}
+```
 
 ## MCP Tools
 
@@ -149,67 +198,21 @@ Fastn SDK → Fastn API
 
 ## Client Configuration
 
-### Claude Desktop
+The JSON examples above work with any MCP client. Here are the config file locations:
 
-Add to your Claude Desktop config (`claude_desktop_config.json`):
+| Client | Config File |
+|--------|------------|
+| **Claude Desktop** | `claude_desktop_config.json` |
+| **Cursor** | `.cursor/mcp.json` in your project |
+| **Claude Code** | `.mcp.json` in your project |
 
-**Remote (hosted server with OAuth):**
-
-```json
-{
-  "mcpServers": {
-    "fastn": {
-      "url": "https://mcp.live.fastn.ai/shttp"
-    }
-  }
-}
-```
-
-**Local (stdio with API key):**
-
-```json
-{
-  "mcpServers": {
-    "fastn": {
-      "command": "fastn-mcp",
-      "args": ["--stdio"],
-      "env": {
-        "FASTN_API_KEY": "your-api-key",
-        "FASTN_PROJECT_ID": "your-project-id"
-      }
-    }
-  }
-}
-```
-
-### Cursor
-
-Add to `.cursor/mcp.json` in your project:
-
-**Remote (hosted server with OAuth):**
+For Cursor, use the `/shttp/ucl` endpoint to expose only UCL tools (recommended for coding assistants):
 
 ```json
 {
   "mcpServers": {
     "fastn": {
       "url": "https://mcp.live.fastn.ai/shttp/ucl"
-    }
-  }
-}
-```
-
-**Local (stdio with API key):**
-
-```json
-{
-  "mcpServers": {
-    "fastn": {
-      "command": "fastn-mcp",
-      "args": ["--stdio", "--mode", "ucl"],
-      "env": {
-        "FASTN_API_KEY": "your-api-key",
-        "FASTN_PROJECT_ID": "your-project-id"
-      }
     }
   }
 }
