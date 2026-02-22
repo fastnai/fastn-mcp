@@ -3,15 +3,16 @@
 Usage:
     python -m fastn_mcp --sse --shttp --port 8000       # SSE + Streamable HTTP
     python -m fastn_mcp --stdio                          # stdio (Claude Desktop)
-    python -m fastn_mcp --stdio --mode ucl                # discovery tools only
+    python -m fastn_mcp --stdio --mode ucl               # UCL tools only
     python -m fastn_mcp --sse --port 8000 --no-auth      # no OAuth (testing)
     python -m fastn_mcp --sse --server-url https://...   # explicit public URL
 
 Endpoints (mode via URL path):
-    POST /shttp                   all tools
-    POST /shttp/ucl               discovery tools only
-    POST /shttp/ucl/{project_id}  discovery + pre-set project
-    GET  /sse, /sse/ucl, ...      same pattern for SSE
+    POST /shttp                                all tools
+    POST /shttp/ucl                            UCL tools only
+    POST /shttp/ucl/{project_id}               UCL + pre-set project
+    POST /shttp/ucl/{project_id}/{skill_id}    UCL + pre-set project and skill
+    GET  /sse, /sse/ucl, ...                   same pattern for SSE
 """
 
 import argparse
@@ -24,7 +25,7 @@ from fastn_mcp.server import main
 def cli():
     parser = argparse.ArgumentParser(
         prog="fastn-mcp",
-        description="Fastn MCP Server — integration flows for vibe coding platforms",
+        description="Fastn MCP Server — connector tools for AI agent platforms",
     )
 
     # Transport flags
@@ -75,16 +76,24 @@ def cli():
         choices=["agent", "ucl"],
         default="agent",
         help='Tool mode for stdio: "agent" (all tools) or "ucl" '
-             '(discovery + execution only). HTTP transports use URL path '
+             '(UCL tools only). HTTP transports use URL path '
              '(/shttp/ucl, /sse/ucl).',
     )
     parser.add_argument(
         "--project",
         default=None,
         metavar="PROJECT_ID",
-        help="Pre-configure the workspace/project ID for stdio transport. "
+        help="Pre-configure the project ID for stdio transport. "
              "For HTTP transports, include project in URL path "
              "(/shttp/ucl/{project_id}).",
+    )
+    parser.add_argument(
+        "--skill",
+        default=None,
+        metavar="SKILL_ID",
+        help="Pre-configure the skill ID for stdio transport. "
+             "For HTTP transports, include skill in URL path "
+             "(/shttp/ucl/{project_id}/{skill_id}).",
     )
     parser.add_argument(
         "-v", "--verbose",
@@ -135,6 +144,7 @@ def cli():
         server_url=args.server_url,
         mode=args.mode,
         project_id=args.project,
+        skill_id=args.skill,
     ))
 
 

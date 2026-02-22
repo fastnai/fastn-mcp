@@ -43,7 +43,7 @@ export FASTN_API_KEY="your-api-key"
 export FASTN_PROJECT_ID="your-project-id"
 ```
 
-Get your API key and project ID from [app.fastn.dev](https://app.fastn.dev).
+Get your API key and project ID from [app.ucl.dev](https://app.ucl.dev).
 
 ### 3. Run
 
@@ -75,19 +75,19 @@ The server exposes these tools to AI agents:
 | Tool | Description |
 |------|-------------|
 | `find_tools` | Search for available tools by natural language prompt. Returns matching tools with IDs and input schemas. |
-| `execute_action` | Execute a tool by its ID with parameters. Returns the result directly. |
+| `execute_tool` | Execute a tool by its ID with parameters. Returns the result directly. |
 | `discover_tools` | Browse all 250+ available connectors in the registry, including ones not yet connected. |
-| `list_projects` | List available workspaces for the authenticated user. |
+| `list_projects` | List available projects for the authenticated user. |
 
-**Workflow:** `find_tools` → `execute_action`. If `find_tools` returns nothing, call `discover_tools` to check if the connector exists but isn't connected yet.
+**Workflow:** `find_tools` → `execute_tool`. If `find_tools` returns nothing, call `discover_tools` to check if the connector exists but isn't connected yet.
 
 ### Flow Management
 
 | Tool | Description |
 |------|-------------|
-| `list_flows` | List saved automations (flows) in the workspace. |
+| `list_flows` | List saved automations (flows) in the project. |
 | `run_flow` | Execute a saved flow by its ID. |
-| `delete_flow` | Remove a flow from the workspace. |
+| `delete_flow` | Remove a flow from the project. |
 | `create_flow` | *(Under development)* Create a flow from natural language. |
 | `update_flow` | *(Under development)* Update an existing flow. |
 
@@ -110,7 +110,7 @@ MCP Protocol (stdio / SSE / Streamable HTTP)
 │   Fastn MCP Server          │
 │   ┌───────────────────────┐ │
 │   │ Tool Discovery        │ │  find_tools, discover_tools
-│   │ Tool Execution        │ │  execute_action
+│   │ Tool Execution        │ │  execute_tool
 │   │ Flow Management       │ │  list/run/delete/create flows
 │   │ Auth & Config         │ │  OAuth 2.1, custom JWT
 │   └───────────────────────┘ │
@@ -146,8 +146,8 @@ fastn-mcp --sse --shttp --port 8000
 | Endpoint | Tools Exposed |
 |----------|--------------|
 | `POST /shttp` | All tools (discovery + flows + config) |
-| `POST /shttp/ucl` | Discovery tools only (4 tools) |
-| `POST /shttp/ucl/{project_id}` | Discovery tools with pre-set project (3 tools) |
+| `POST /shttp/ucl` | UCL tools only (4 tools) |
+| `POST /shttp/ucl/{project_id}` | UCL tools with pre-set project (3 tools) |
 | `GET /sse`, `GET /sse/ucl`, etc. | Same pattern for SSE transport |
 
 ### Tool Mode (stdio)
@@ -155,8 +155,8 @@ fastn-mcp --sse --shttp --port 8000
 Filter tools in stdio mode:
 
 ```bash
-fastn-mcp --stdio --mode ucl              # Discovery tools only
-fastn-mcp --stdio --mode ucl --project ID  # Discovery + pre-set project
+fastn-mcp --stdio --mode ucl              # UCL tools only
+fastn-mcp --stdio --mode ucl --project ID  # UCL tools + pre-set project
 ```
 
 ## Authentication
@@ -219,8 +219,8 @@ FASTN_MCP_VERBOSE=false
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `FASTN_API_KEY` | Yes | Your Fastn API key from [app.fastn.dev](https://app.fastn.dev) |
-| `FASTN_PROJECT_ID` | Yes | Your workspace/project ID |
+| `FASTN_API_KEY` | Yes | Your Fastn API key from [app.ucl.dev](https://app.ucl.dev) |
+| `FASTN_PROJECT_ID` | Yes | Your project ID |
 | `FASTN_MCP_PORT` | No | Server port (default: `8000`) |
 | `FASTN_MCP_HOST` | No | Bind address (default: `0.0.0.0`) |
 | `FASTN_MCP_SERVER_URL` | No | Public URL for OAuth metadata (e.g. ngrok URL) |
@@ -366,7 +366,7 @@ Server:
   --server-url URL Public URL for OAuth metadata
 
 Mode:
-  --mode {agent,ucl} Tool mode for stdio: "agent" (all tools) or "ucl" (discovery only)
+  --mode {agent,ucl} Tool mode for stdio: "agent" (all tools) or "ucl" (UCL tools only)
   --project ID     Pre-set project ID for stdio
 
 Debug:
@@ -391,7 +391,7 @@ Fastn provides 250+ pre-built connectors including:
 
 **Finance:** Stripe, QuickBooks, Xero
 
-**And 200+ more** — browse the full catalog at [app.fastn.dev](https://app.fastn.dev)
+**And 200+ more** — browse the full catalog at [app.ucl.dev](https://app.ucl.dev)
 
 ## License
 

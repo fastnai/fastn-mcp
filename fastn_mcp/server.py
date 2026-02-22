@@ -2,10 +2,9 @@
 
 Exposes MCP tools for vibe coding platforms (Lovable, Bolt, v0, Cursor):
 
-  Discovery:  find_tools, discover_tools
-  Execution:  execute_action
-  Flows:      list_flows, run_flow, delete_flow, create_flow*, update_flow*
-  Config:     configure_custom_auth, list_projects
+  UCL:    find_tools, execute_tool, discover_tools, list_skills, list_projects
+  Agent:  list_flows, run_flow, delete_flow, create_flow*, update_flow*,
+          configure_custom_auth
 
 Transports:
   stdio            Local pipe (Claude Desktop / Cursor)
@@ -59,7 +58,7 @@ _SERVER_INSTRUCTIONS = (
     "Fastn — 250+ pre-built connectors (Stripe, Slack, Jira, Salesforce, HubSpot, "
     "Postgres, and more) with managed OAuth, sub-second execution, and multi-step "
     "flow orchestration. "
-    "Workflow: find_tools → execute_action. "
+    "Workflow: find_tools → execute_tool. "
     "If find_tools returns nothing, call discover_tools to check if the connector "
     "exists but is not yet connected — show the user the connect_url. "
     "For multi-step automations use create_flow, then trigger with run_flow. "
@@ -85,30 +84,35 @@ _active_sse_sessions: set[str] = set()
 # ---------------------------------------------------------------------------
 # Server mode — controls which tools are exposed (set once at startup)
 # ---------------------------------------------------------------------------
-# "agent" → all tools (discovery + execution + flows + config)
-# "ucl"   → discovery + execution tools only
+# "agent" → all tools (UCL + flows + config)
+# "ucl"   → UCL tools only
 _server_mode: str = "agent"
 _server_project_id: str | None = None
+_server_skill_id: str | None = None
 
-UCL_TOOL_NAMES = {"find_tools", "execute_action", "discover_tools", "list_projects"}
+UCL_TOOL_NAMES = {"find_tools", "execute_tool", "discover_tools", "list_skills", "list_projects"}
 
 # Request-scoped project_id — set per-connection (SSE) or per-request (shttp).
 _request_project_id: ContextVar[str | None] = ContextVar("_request_project_id", default=None)
 
-_UCL_PATH_RE = _re.compile(r"^/ucl(?:/([a-f0-9-]{36}))?$")
+# Request-scoped skill_id — set when URL includes /ucl/{project_id}/{skill_id}.
+_request_skill_id: ContextVar[str | None] = ContextVar("_request_skill_id", default=None)
+
+_UCL_PATH_RE = _re.compile(r"^/ucl(?:/([a-f0-9-]{36}))?(?:/([a-f0-9-]{36}))?$")
 
 
-def _parse_mode_from_path(path: str) -> tuple[str, str | None]:
-    """Parse mode and project_id from URL sub-path.
+def _parse_mode_from_path(path: str) -> tuple[str, str | None, str | None]:
+    """Parse mode, project_id, and skill_id from URL sub-path.
 
-    "/" or ""       → ("agent", None)
-    "/ucl"          → ("ucl", None)
-    "/ucl/<uuid>"   → ("ucl", "<uuid>")
+    "/" or ""                    → ("agent", None, None)
+    "/ucl"                      → ("ucl", None, None)
+    "/ucl/<project_id>"         → ("ucl", "<project_id>", None)
+    "/ucl/<project_id>/<skill>" → ("ucl", "<project_id>", "<skill_id>")
     """
     m = _UCL_PATH_RE.match(path)
     if m:
-        return "ucl", m.group(1)
-    return "agent", None
+        return "ucl", m.group(1), m.group(2)
+    return "agent", None, None
 
 
 # ---------------------------------------------------------------------------
@@ -226,21 +230,20 @@ async def _sdk_client(arguments: Dict[str, Any]):
 
 TOOLS = [
     # =====================================================================
-    # DISCOVERY & EXECUTION TOOLS
-    # Primary tools for AI agents to find and run integration actions.
-    # Workflow: find_tools → execute_action
-    # Fallback: discover_tools → prompt user to enable at app.ucl.dev
+    # UCL TOOLS
+    # Workflow: find_tools → execute_tool
+    # Fallback: discover_tools → prompt user to connect at app.ucl.dev
     # =====================================================================
     Tool(
         name="find_tools",
         description=(
-            "ALWAYS call this first when the user wants to perform any "
-            "integration action (send message, create ticket, send email, "
-            "etc). Searches for actions that are active and connected in "
-            "this workspace. Returns matching actions with actionId and "
-            "inputSchema. Next step: pass the actionId to execute_action. "
+            "ALWAYS call this first when the user wants to use any "
+            "connector tool (send message, create ticket, send email, "
+            "etc). Searches for tools that are active and connected in "
+            "this project. Returns matching tools with actionId and "
+            "inputSchema. Next step: pass the actionId to execute_tool. "
             "IMPORTANT: If no results are returned, you MUST immediately "
-            "call discover_tools to check if the integration exists but "
+            "call discover_tools to check if the connector exists but "
             "is not yet connected — never tell the user something is "
             "unavailable without checking discover_tools first."
         ),
@@ -249,7 +252,7 @@ TOOLS = [
             "properties": {
                 "prompt": {
                     "type": "string",
-                    "description": "Describe the integration you need, including context about what you are building (e.g. 'send a Slack notification when a new order is placed' rather than just 'slack'). Richer prompts return more relevant tools.",
+                    "description": "Describe what you need, including context about what you are building (e.g. 'send a Slack notification when a new order is placed' rather than just 'slack'). Richer prompts return more relevant tools.",
                 },
                 "goal": {
                     "type": "string",
@@ -264,23 +267,18 @@ TOOLS = [
                     "items": {"type": "string"},
                     "description": "Narrow results to connector domains (e.g. ['payments', 'crm', 'messaging', 'database', 'email', 'project-management'])",
                 },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max tools to return (default: 5). Lower values reduce context size but may miss relevant tools. Increase to 10-20 when accuracy is critical or the prompt is broad. Decrease to 1-3 when you know exactly what you need and want minimal context.",
-                    "default": 5,
-                },
             },
             "required": ["prompt"],
         },
     ),
     Tool(
-        name="execute_action",
+        name="execute_tool",
         description=(
-            "Execute an integration action by its actionId. Call find_tools "
+            "Execute a connector tool by its actionId. Call find_tools "
             "first to get the actionId and inputSchema, then call this with "
             "the action_id and matching parameters. Returns the result "
             "directly. Only use actionIds returned by find_tools — do not "
-            "guess or fabricate action IDs."
+            "guess or fabricate IDs."
         ),
         inputSchema={
             "type": "object",
@@ -291,11 +289,11 @@ TOOLS = [
                 },
                 "parameters": {
                     "type": "object",
-                    "description": "Key-value parameters matching the action's inputSchema",
+                    "description": "Key-value parameters matching the tool's inputSchema",
                 },
                 "connection_id": {
                     "type": "string",
-                    "description": "Connection ID for multi-connection tools (optional)",
+                    "description": "Connection ID when a connector has multiple connections (optional)",
                 },
             },
             "required": ["action_id", "parameters"],
@@ -305,29 +303,42 @@ TOOLS = [
         name="discover_tools",
         description=(
             "Fallback: call this automatically when find_tools returns no "
-            "results. Browses all available integrations (200+) in the "
-            "workspace registry, including ones not yet connected. Returns "
-            "tool names and a connect_url. If the user's requested tool "
+            "results. Browses all available connectors (200+) in the "
+            "project, including ones not yet connected. Returns connector "
+            "names and a connect_url. If the user's requested connector "
             "exists but is not connected, show them the connect_url so "
             "they can enable it, then retry find_tools. Use the query "
-            "parameter to filter by name (e.g. 'teams', 'jira')."
+            "parameter to filter by connector name (e.g. 'teams', 'jira')."
         ),
         inputSchema={
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Optional filter by tool name (e.g. 'slack', 'jira')",
+                    "description": "Filter by connector name (e.g. 'slack', 'jira')",
                 },
             },
         },
     ),
     Tool(
+        name="list_skills",
+        description=(
+            "List available skills in the current project. Each skill is a "
+            "scoped set of tools and instructions for a specific capability "
+            "(e.g. customer onboarding, incident response). Returns skill "
+            "names, descriptions, and IDs."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {},
+        },
+    ),
+    Tool(
         name="list_projects",
         description=(
-            "List available workspaces for the authenticated user. Use this "
-            "when you get WORKSPACE_NOT_SET errors or the user has multiple "
-            "workspaces. Returns project IDs and names — pass the selected "
+            "List available projects for the authenticated user. Use this "
+            "when you get PROJECT_NOT_SET errors or the user has multiple "
+            "projects. Returns project IDs and names — pass the selected "
             "ID as project_id in subsequent tool calls."
         ),
         inputSchema={
@@ -344,7 +355,7 @@ TOOLS = [
     Tool(
         name="list_flows",
         description=(
-            "List saved automations (flows) in the current workspace. "
+            "List saved automations (flows) in the current project. "
             "Returns flow_id, name, and status for each flow. Use the "
             "flow_id with run_flow to execute or delete_flow to remove."
         ),
@@ -400,15 +411,15 @@ TOOLS = [
         name="create_flow",
         description=(
             "(Under development) Create an automation from a natural "
-            "language prompt. Not yet available. To run integration actions "
-            "now, use: find_tools → execute_action."
+            "language prompt. Not yet available. To run connector tools "
+            "now, use: find_tools → execute_tool."
         ),
         inputSchema={
             "type": "object",
             "properties": {
                 "prompt": {
                     "type": "string",
-                    "description": "Plain English description of the integration to create",
+                    "description": "Plain English description of the automation to create",
                 },
                 "answers": {
                     "type": "object",
@@ -441,7 +452,7 @@ TOOLS = [
     ),
     # =====================================================================
     # CONFIGURATION TOOLS
-    # Setup and configuration for the workspace.
+    # Setup and configuration for the project.
     # =====================================================================
     Tool(
         name="configure_custom_auth",
@@ -488,6 +499,8 @@ async def handle_list_tools() -> list[Tool]:
         names = UCL_TOOL_NAMES
         if _server_project_id:
             names = names - {"list_projects"}
+        if _server_skill_id:
+            names = names - {"list_skills"}
         return [t for t in TOOLS if t.name in names]
     return TOOLS
 
@@ -553,7 +566,7 @@ async def _handle_create_flow(arguments: dict) -> list[TextContent]:
     """Create a flow — under development."""
     return _error_result(
         "UNDER_DEVELOPMENT",
-        "Flow creation is under development. Use find_tools → execute_action.",
+        "Flow creation is under development. Use find_tools → execute_tool.",
     )
 
 
@@ -589,7 +602,7 @@ async def _handle_run_flow(arguments: dict) -> list[TextContent]:
 
 
 async def _handle_list_flows(arguments: dict) -> list[TextContent]:
-    """List all flows in the workspace."""
+    """List all flows in the project."""
     async with _sdk_client(arguments) as client:
         result = await client.flows.list(status=arguments.get("status"))
         return _success_result({"flows": result, "total": len(result)})
@@ -611,16 +624,16 @@ async def _handle_find_tools(arguments: dict) -> list[TextContent]:
         )
 
     async with _sdk_client(arguments) as client:
-        limit = arguments.get("limit", 5)
-        tools = await client.get_tools_for(prompt=prompt, format="raw", limit=limit)
+        tools = await client.get_tools_for(prompt=prompt, format="raw", limit=5)
         return _success_result({"tools": tools, "total": len(tools)})
 
 
 async def _handle_discover_tools(arguments: dict) -> list[TextContent]:
-    """Browse all available connectors in the workspace registry."""
+    """Browse all available connectors in the project."""
     async with _sdk_client(arguments) as client:
         workspace_id = client._config.resolve_project_id()
-        connectors = client.admin.connectors.list()
+        agent_id = arguments.get("project_id") or workspace_id
+        connectors = client.connectors.list()
         query = arguments.get("query", "")
         if query:
             q = query.lower()
@@ -628,11 +641,12 @@ async def _handle_discover_tools(arguments: dict) -> list[TextContent]:
                 c for c in connectors
                 if q in c["name"].lower() or q in c.get("display_name", "").lower()
             ]
-        connect_url = f"https://app.fastn.dev/projects/{workspace_id}/connectors"
-        return _success_result({"connectors": connectors, "total": len(connectors), "connect_url": connect_url})
+        connect_url = f"https://app.ucl.dev/projects/{workspace_id}/ucl/{agent_id}"
+        results = [{"name": c["name"], "connect_url": connect_url} for c in connectors]
+        return _success_result({"connectors": results, "total": len(results)})
 
 
-async def _handle_execute_action(arguments: dict) -> list[TextContent]:
+async def _handle_execute_tool(arguments: dict) -> list[TextContent]:
     """Execute a tool by its actionId."""
     action_id = arguments.get("action_id", "")
     if not action_id:
@@ -660,6 +674,17 @@ async def _handle_configure_custom_auth(arguments: dict) -> list[TextContent]:
         return _success_result(result)
 
 
+async def _handle_list_skills(arguments: dict) -> list[TextContent]:
+    """List skills available in the current project."""
+    async with _sdk_client(arguments) as client:
+        skills = await client.skills.list()
+        results = [
+            {"id": s["id"], "name": s["name"], "description": s.get("description", "")}
+            for s in skills
+        ]
+        return _success_result({"skills": results, "total": len(results)})
+
+
 async def _handle_list_projects(arguments: dict) -> list[TextContent]:
     """List projects available to the authenticated user."""
     async with _sdk_client(arguments) as client:
@@ -671,13 +696,14 @@ async def _handle_list_projects(arguments: dict) -> list[TextContent]:
 _TOOL_HANDLERS = {
     "find_tools": _handle_find_tools,
     "discover_tools": _handle_discover_tools,
-    "execute_action": _handle_execute_action,
+    "execute_tool": _handle_execute_tool,
     "list_flows": _handle_list_flows,
     "run_flow": _handle_run_flow,
     "delete_flow": _handle_delete_flow,
     "create_flow": _handle_create_flow,
     "update_flow": _handle_update_flow,
     "configure_custom_auth": _handle_configure_custom_auth,
+    "list_skills": _handle_list_skills,
     "list_projects": _handle_list_projects,
 }
 
@@ -716,11 +742,12 @@ def _create_mcp_server(tools: list[Tool]) -> Server:
 # Server entry points — one per transport
 # ---------------------------------------------------------------------------
 
-async def run_stdio(mode: str = "agent", project_id: str | None = None):
+async def run_stdio(mode: str = "agent", project_id: str | None = None, skill_id: str | None = None):
     """Run the Fastn MCP server via stdio transport (local, default)."""
-    global _server_mode, _server_project_id
+    global _server_mode, _server_project_id, _server_skill_id
     _server_mode = mode
     _server_project_id = project_id
+    _server_skill_id = skill_id
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
@@ -738,8 +765,8 @@ def create_starlette_app(
 
     Clients choose mode via URL path:
       /shttp          → all tools
-      /shttp/ucl      → discovery tools only
-      /shttp/ucl/{id} → discovery tools with pre-set project
+      /shttp/ucl      → UCL tools only
+      /shttp/ucl/{id} → UCL tools with pre-set project
       (same pattern for /sse)
     """
     import contextlib
@@ -901,14 +928,17 @@ def create_starlette_app(
     all_tools = TOOLS
     ucl_tools = [t for t in TOOLS if t.name in UCL_TOOL_NAMES]
     ucl_tools_no_proj = [t for t in TOOLS if t.name in (UCL_TOOL_NAMES - {"list_projects"})]
+    ucl_tools_no_proj_skill = [t for t in TOOLS if t.name in (UCL_TOOL_NAMES - {"list_projects", "list_skills"})]
 
     server_all = _create_mcp_server(all_tools)
     server_ucl = _create_mcp_server(ucl_tools)
     server_ucl_proj = _create_mcp_server(ucl_tools_no_proj)
+    server_ucl_proj_skill = _create_mcp_server(ucl_tools_no_proj_skill)
 
     mgr_all = StreamableHTTPSessionManager(app=server_all, stateless=True)
     mgr_ucl = StreamableHTTPSessionManager(app=server_ucl, stateless=True)
     mgr_ucl_proj = StreamableHTTPSessionManager(app=server_ucl_proj, stateless=True)
+    mgr_ucl_proj_skill = StreamableHTTPSessionManager(app=server_ucl_proj_skill, stateless=True)
 
     # Route (exact match) not Mount (prefix match) — Mount appends
     # /{path:path} so it won't match the exact prefix path.
@@ -918,26 +948,41 @@ def create_starlette_app(
         await mgr_all.handle_request(scope, receive, send)
 
     async def _shttp_ucl(scope, receive, send):
-        logger.info("→ shttp DISC handler (%d tools)", len(ucl_tools))
+        logger.info("→ shttp UCL handler (%d tools)", len(ucl_tools))
         await mgr_ucl.handle_request(scope, receive, send)
 
     async def _shttp_ucl_proj(scope, receive, send):
         project_id = scope.get("path_params", {}).get("project_id", "")
-        logger.info("→ shttp DISC+project handler (project=%s, %d tools)", project_id, len(ucl_tools_no_proj))
+        logger.info("→ shttp UCL+project handler (project=%s, %d tools)", project_id, len(ucl_tools_no_proj))
         token = _request_project_id.set(project_id)
         try:
             await mgr_ucl_proj.handle_request(scope, receive, send)
         finally:
             _request_project_id.reset(token)
 
+    async def _shttp_ucl_proj_skill(scope, receive, send):
+        path_params = scope.get("path_params", {})
+        project_id = path_params.get("project_id", "")
+        skill_id = path_params.get("skill_id", "")
+        logger.info("→ shttp UCL+project+skill handler (project=%s, skill=%s, %d tools)", project_id, skill_id, len(ucl_tools_no_proj_skill))
+        proj_token = _request_project_id.set(project_id)
+        skill_token = _request_skill_id.set(skill_id)
+        try:
+            await mgr_ucl_proj_skill.handle_request(scope, receive, send)
+        finally:
+            _request_skill_id.reset(skill_token)
+            _request_project_id.reset(proj_token)
+
     if auth_enabled:
         shttp_app_all = RequireAuthMiddleware(_shttp_all, required_scopes=[])
         shttp_app_ucl = RequireAuthMiddleware(_shttp_ucl, required_scopes=[])
         shttp_app_ucl_proj = RequireAuthMiddleware(_shttp_ucl_proj, required_scopes=[])
+        shttp_app_ucl_proj_skill = RequireAuthMiddleware(_shttp_ucl_proj_skill, required_scopes=[])
     else:
         shttp_app_all = _AsgiApp(_shttp_all)
         shttp_app_ucl = _AsgiApp(_shttp_ucl)
         shttp_app_ucl_proj = _AsgiApp(_shttp_ucl_proj)
+        shttp_app_ucl_proj_skill = _AsgiApp(_shttp_ucl_proj_skill)
 
     # ── Build transport-specific app ─────────────────────────────────────
     # Resolve which transports to enable
@@ -955,16 +1000,19 @@ def create_starlette_app(
         all_tool_names = [t.name for t in TOOLS]
         ucl_tool_names = sorted(UCL_TOOL_NAMES)
         ucl_no_proj_names = sorted(UCL_TOOL_NAMES - {"list_projects"})
+        ucl_no_proj_skill_names = sorted(UCL_TOOL_NAMES - {"list_projects", "list_skills"})
 
         endpoints = []
         if enable_shttp:
             endpoints.append({"method": "POST", "path": "/shttp", "url": f"{base}/shttp", "mode": "agent", "tools": len(all_tool_names), "description": "Streamable HTTP — all tools"})
-            endpoints.append({"method": "POST", "path": "/shttp/ucl", "url": f"{base}/shttp/ucl", "mode": "ucl", "tools": len(ucl_tool_names), "description": "Streamable HTTP — discovery tools only"})
-            endpoints.append({"method": "POST", "path": "/shttp/ucl/{project_id}", "url": f"{base}/shttp/ucl/{{project_id}}", "mode": "ucl", "tools": len(ucl_no_proj_names), "description": "Streamable HTTP — discovery with pre-set project"})
+            endpoints.append({"method": "POST", "path": "/shttp/ucl", "url": f"{base}/shttp/ucl", "mode": "ucl", "tools": len(ucl_tool_names), "description": "Streamable HTTP — UCL tools only"})
+            endpoints.append({"method": "POST", "path": "/shttp/ucl/{project_id}", "url": f"{base}/shttp/ucl/{{project_id}}", "mode": "ucl", "tools": len(ucl_no_proj_names), "description": "Streamable HTTP — UCL with pre-set project"})
+            endpoints.append({"method": "POST", "path": "/shttp/ucl/{project_id}/{skill_id}", "url": f"{base}/shttp/ucl/{{project_id}}/{{skill_id}}", "mode": "ucl", "tools": len(ucl_no_proj_skill_names), "description": "Streamable HTTP — UCL with pre-set project and skill"})
         if enable_sse:
             endpoints.append({"method": "GET", "path": "/sse", "url": f"{base}/sse", "mode": "agent", "tools": len(all_tool_names), "description": "SSE — all tools"})
-            endpoints.append({"method": "GET", "path": "/sse/ucl", "url": f"{base}/sse/ucl", "mode": "ucl", "tools": len(ucl_tool_names), "description": "SSE — discovery tools only"})
-            endpoints.append({"method": "GET", "path": "/sse/ucl/{project_id}", "url": f"{base}/sse/ucl/{{project_id}}", "mode": "ucl", "tools": len(ucl_no_proj_names), "description": "SSE — discovery with pre-set project"})
+            endpoints.append({"method": "GET", "path": "/sse/ucl", "url": f"{base}/sse/ucl", "mode": "ucl", "tools": len(ucl_tool_names), "description": "SSE — UCL tools only"})
+            endpoints.append({"method": "GET", "path": "/sse/ucl/{project_id}", "url": f"{base}/sse/ucl/{{project_id}}", "mode": "ucl", "tools": len(ucl_no_proj_names), "description": "SSE — UCL with pre-set project"})
+            endpoints.append({"method": "GET", "path": "/sse/ucl/{project_id}/{skill_id}", "url": f"{base}/sse/ucl/{{project_id}}/{{skill_id}}", "mode": "ucl", "tools": len(ucl_no_proj_skill_names), "description": "SSE — UCL with pre-set project and skill"})
             endpoints.append({"method": "POST", "path": "/messages/", "url": f"{base}/messages/", "description": "SSE messages"})
 
         if auth_enabled:
@@ -976,7 +1024,7 @@ def create_starlette_app(
             endpoints.append({"method": "GET", "path": "/callback", "url": f"{base}/callback", "description": "Keycloak callback"})
 
         modes = {
-            "agent": {"description": "All tools (discovery + execution + flows + config)", "tools": all_tool_names},
+            "agent": {"description": "All tools (UCL + flows + config)", "tools": all_tool_names},
             "ucl": {"description": "Discovery and execution tools only", "tools": ucl_tool_names},
         }
 
@@ -1026,13 +1074,16 @@ def create_starlette_app(
 
             async def handle_sse(scope, receive, send):
                 """Handle incoming SSE connections."""
-                # Optionally parse project_id from URL path
+                # Optionally parse project_id and skill_id from URL path
                 project_token = None
+                skill_token = None
                 if parse_project_from_path:
                     path = scope.get("path", "") or "/"
-                    m = _re.search(r"/([a-f0-9-]{36})", path)
-                    if m:
-                        project_token = _request_project_id.set(m.group(1))
+                    uuids = _re.findall(r"[a-f0-9-]{36}", path)
+                    if len(uuids) >= 1:
+                        project_token = _request_project_id.set(uuids[0])
+                    if len(uuids) >= 2:
+                        skill_token = _request_skill_id.set(uuids[1])
 
                 session_id: str | None = None
                 try:
@@ -1059,6 +1110,8 @@ def create_starlette_app(
                     else:
                         logger.exception("Unexpected errors in SSE handler")
                 finally:
+                    if skill_token is not None:
+                        _request_skill_id.reset(skill_token)
                     if project_token is not None:
                         _request_project_id.reset(project_token)
                     if session_id:
@@ -1075,6 +1128,7 @@ def create_starlette_app(
         sse_all = _make_sse_handler(server_all)
         sse_ucl = _make_sse_handler(server_ucl)
         sse_ucl_proj = _make_sse_handler(server_ucl_proj, parse_project_from_path=True)
+        sse_ucl_proj_skill = _make_sse_handler(server_ucl_proj_skill, parse_project_from_path=True)
 
         async def handle_post_message(scope, receive, send):
             """Wrap SSE POST handler to detect dead sessions early."""
@@ -1112,15 +1166,18 @@ def create_starlette_app(
             sse_handler_all = RequireAuthMiddleware(sse_all, required_scopes=[])
             sse_handler_ucl = RequireAuthMiddleware(sse_ucl, required_scopes=[])
             sse_handler_ucl_proj = RequireAuthMiddleware(sse_ucl_proj, required_scopes=[])
+            sse_handler_ucl_proj_skill = RequireAuthMiddleware(sse_ucl_proj_skill, required_scopes=[])
             messages_handler = RequireAuthMiddleware(handle_post_message, required_scopes=[])
         else:
             sse_handler_all = _AsgiApp(sse_all)
             sse_handler_ucl = _AsgiApp(sse_ucl)
             sse_handler_ucl_proj = _AsgiApp(sse_ucl_proj)
+            sse_handler_ucl_proj_skill = _AsgiApp(sse_ucl_proj_skill)
             messages_handler = _AsgiApp(handle_post_message)
 
         routes.append(Route("/sse", endpoint=sse_handler_all))
         routes.append(Route("/sse/ucl", endpoint=sse_handler_ucl))
+        routes.append(Route("/sse/ucl/{project_id}/{skill_id}", endpoint=sse_handler_ucl_proj_skill))
         routes.append(Route("/sse/ucl/{project_id}", endpoint=sse_handler_ucl_proj))
         routes.append(Mount("/messages/", app=messages_handler))
         transport_names.append("SSE")
@@ -1129,6 +1186,7 @@ def create_starlette_app(
     # Uses Route (exact match) not Mount (prefix match) because Mount
     # appends /{path:path} and won't match the exact prefix path.
     if enable_shttp:
+        routes.append(Route("/shttp/ucl/{project_id}/{skill_id}", endpoint=shttp_app_ucl_proj_skill))
         routes.append(Route("/shttp/ucl/{project_id:path}", endpoint=shttp_app_ucl_proj))
         routes.append(Route("/shttp/ucl", endpoint=shttp_app_ucl))
         routes.append(Route("/shttp", endpoint=shttp_app_all))
@@ -1142,15 +1200,16 @@ def create_starlette_app(
         async with mgr_all.run():
             async with mgr_ucl.run():
                 async with mgr_ucl_proj.run():
-                    async with anyio.create_task_group() as tg:
-                        if _oauth_provider is not None:
-                            async def _cleanup_loop() -> None:
-                                while True:
-                                    await anyio.sleep(300)
-                                    _oauth_provider.cleanup_expired()
-                            tg.start_soon(_cleanup_loop)
-                        yield
-                        tg.cancel_scope.cancel()
+                    async with mgr_ucl_proj_skill.run():
+                        async with anyio.create_task_group() as tg:
+                            if _oauth_provider is not None:
+                                async def _cleanup_loop() -> None:
+                                    while True:
+                                        await anyio.sleep(300)
+                                        _oauth_provider.cleanup_expired()
+                                tg.start_soon(_cleanup_loop)
+                            yield
+                            tg.cancel_scope.cancel()
         logger.info("Fastn MCP server stopped")
 
     app = Starlette(
@@ -1204,23 +1263,27 @@ def _print_startup_info(
         lines.append("  Endpoints (mode filtering is runtime — all combinations available):")
         if enable_shttp:
             lines.append(f"    POST {base}/shttp                   all tools ({len(TOOLS)})")
-            lines.append(f"    POST {base}/shttp/ucl               discovery tools ({len(UCL_TOOL_NAMES)})")
-            lines.append(f"    POST {base}/shttp/ucl/{{project_id}}  discovery + project ({len(UCL_TOOL_NAMES) - 1})")
+            lines.append(f"    POST {base}/shttp/ucl               UCL tools ({len(UCL_TOOL_NAMES)})")
+            lines.append(f"    POST {base}/shttp/ucl/{{project_id}}  UCL + project ({len(UCL_TOOL_NAMES) - 1})")
+            lines.append(f"    POST {base}/shttp/ucl/{{project_id}}/{{skill_id}}  UCL + project + skill ({len(UCL_TOOL_NAMES) - 2})")
         if enable_sse:
             lines.append(f"    GET  {base}/sse                     all tools ({len(TOOLS)})")
-            lines.append(f"    GET  {base}/sse/ucl                 discovery tools ({len(UCL_TOOL_NAMES)})")
-            lines.append(f"    GET  {base}/sse/ucl/{{project_id}}    discovery + project ({len(UCL_TOOL_NAMES) - 1})")
+            lines.append(f"    GET  {base}/sse/ucl                 UCL tools ({len(UCL_TOOL_NAMES)})")
+            lines.append(f"    GET  {base}/sse/ucl/{{project_id}}    UCL + project ({len(UCL_TOOL_NAMES) - 1})")
+            lines.append(f"    GET  {base}/sse/ucl/{{project_id}}/{{skill_id}}    UCL + project + skill ({len(UCL_TOOL_NAMES) - 2})")
             lines.append(f"    POST {base}/messages/               SSE messages")
     else:
         lines.append(f"  Mode      : {_server_mode}")
         if _server_project_id:
             lines.append(f"  Project   : {_server_project_id}")
+        if _server_skill_id:
+            lines.append(f"  Skill     : {_server_skill_id}")
 
     # Tools
     lines.append("")
     lines.append(f"  Tools ({len(TOOLS)}):")
     for tool in TOOLS:
-        tag = "[Disc]" if tool.name in UCL_TOOL_NAMES else "[Flow]"
+        tag = "[UCL]" if tool.name in UCL_TOOL_NAMES else "[Agent]"
         lines.append(f"    {tag:8s} {tool.name}")
 
     lines.append("")
@@ -1238,15 +1301,16 @@ async def main(
     server_url: Optional[str] = None,
     mode: str = "agent",
     project_id: Optional[str] = None,
+    skill_id: Optional[str] = None,
 ):
     """Run the Fastn MCP server.
 
     HTTP transports use URL path for mode filtering (/shttp/ucl, /sse/ucl).
-    The --mode and --project flags apply to stdio transport only.
+    The --mode, --project, and --skill flags apply to stdio transport only.
     """
     if transport == "stdio":
         _print_startup_info(transport=transport)
-        await run_stdio(mode=mode, project_id=project_id)
+        await run_stdio(mode=mode, project_id=project_id, skill_id=skill_id)
     elif transport in ("sse", "sse-only", "shttp-only", "streamable-http"):
         import uvicorn
 

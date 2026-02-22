@@ -32,11 +32,12 @@ from fastn_mcp.server import (
     _handle_delete_flow as delete_flow,
     _handle_update_flow as update_flow,
     _handle_run_flow as run_flow,
-    _handle_execute_action as execute_action,
+    _handle_execute_tool as execute_tool,
     _handle_list_flows as list_flows,
     _handle_find_tools as find_tools,
     _handle_discover_tools as discover_tools,
     _handle_configure_custom_auth as configure_custom_auth,
+    _handle_list_skills as list_skills,
     _handle_list_projects as list_projects,
     handle_call_tool,
     handle_list_tools,
@@ -84,10 +85,13 @@ def _mock_client(**namespace_mocks):
     client.connections.initiate = namespace_mocks.get("connections_initiate", AsyncMock(return_value={}))
     client.connections.status = namespace_mocks.get("connections_status", AsyncMock(return_value={}))
 
-    # Admin namespace (sync — not async)
-    client.admin = MagicMock()
-    client.admin.connectors = MagicMock()
-    client.admin.connectors.list = namespace_mocks.get("admin_connectors_list", MagicMock(return_value=[]))
+    # Connectors catalog (sync — not async)
+    client.connectors = MagicMock()
+    client.connectors.list = namespace_mocks.get("connectors_list", MagicMock(return_value=[]))
+
+    # Skills namespace
+    client.skills = MagicMock()
+    client.skills.list = namespace_mocks.get("skills_list", AsyncMock(return_value=[]))
 
     # Projects namespace
     client.projects = MagicMock()
@@ -96,13 +100,13 @@ def _mock_client(**namespace_mocks):
     # configure_custom_auth
     client.configure_custom_auth = namespace_mocks.get("configure_custom_auth", AsyncMock(return_value={}))
 
-    # execute (used by execute_action and run_flow)
+    # execute (used by execute_tool and run_flow)
     client.execute = namespace_mocks.get("execute", AsyncMock(return_value={}))
 
     # Registry (used by get_tool_actions to look up connector IDs)
     client._registry = namespace_mocks.get("registry", {"connectors": {}})
 
-    # Config (used by delete_flow for workspace_id)
+    # Config (used by delete_flow for project_id)
     client._config = namespace_mocks.get("config", MagicMock())
     client._config.resolve_project_id = MagicMock(return_value="workspace_123")
 
@@ -121,7 +125,7 @@ class TestCreateFlow:
 
         data = _parse_result(result)
         assert data["error"] == "UNDER_DEVELOPMENT"
-        assert "execute_action" in data["message"]
+        assert "execute_tool" in data["message"]
 
 
 # ---------------------------------------------------------------------------
@@ -258,18 +262,18 @@ class TestRunFlow:
 
 
 # ---------------------------------------------------------------------------
-# execute_action tests
+# execute_tool tests
 # ---------------------------------------------------------------------------
 
 class TestExecuteAction:
     @pytest.mark.asyncio
     async def test_success(self):
-        """execute_action calls client.execute() and returns result."""
+        """execute_tool calls client.execute() and returns result."""
         client = _mock_client(
             execute=AsyncMock(return_value={"message_id": "msg_123", "ok": True}),
         )
         with patch("fastn_mcp.server._get_client", return_value=client):
-            result = await execute_action({
+            result = await execute_tool({
                 "action_id": "act_slack_send",
                 "parameters": {"channel": "general", "text": "Hello"},
             })
@@ -285,12 +289,12 @@ class TestExecuteAction:
 
     @pytest.mark.asyncio
     async def test_with_connection_id(self):
-        """execute_action passes connection_id to client.execute()."""
+        """execute_tool passes connection_id to client.execute()."""
         client = _mock_client(
             execute=AsyncMock(return_value={"ok": True}),
         )
         with patch("fastn_mcp.server._get_client", return_value=client):
-            await execute_action({
+            await execute_tool({
                 "action_id": "act_slack_send",
                 "parameters": {"channel": "general"},
                 "connection_id": "conn_abc",
@@ -304,16 +308,16 @@ class TestExecuteAction:
 
     @pytest.mark.asyncio
     async def test_missing_action_id(self):
-        """execute_action returns MISSING_PARAM when action_id not provided."""
-        result = await execute_action({"parameters": {"key": "value"}})
+        """execute_tool returns MISSING_PARAM when action_id not provided."""
+        result = await execute_tool({"parameters": {"key": "value"}})
 
         data = _parse_result(result)
         assert data["error"] == "MISSING_PARAM"
 
     @pytest.mark.asyncio
     async def test_invalid_parameters(self):
-        """execute_action returns INVALID_PARAM when parameters is not a dict."""
-        result = await execute_action({
+        """execute_tool returns INVALID_PARAM when parameters is not a dict."""
+        result = await execute_tool({
             "action_id": "act_test",
             "parameters": "not_a_dict",
         })
@@ -323,33 +327,33 @@ class TestExecuteAction:
 
     @pytest.mark.asyncio
     async def test_auth_error_propagates(self):
-        """execute_action propagates AuthError to centralized handler."""
+        """execute_tool propagates AuthError to centralized handler."""
         client = _mock_client(
             execute=AsyncMock(side_effect=AuthError("Token expired")),
         )
         with patch("fastn_mcp.server._get_client", return_value=client), \
              pytest.raises(AuthError):
-            await execute_action({"action_id": "act_test", "parameters": {}})
+            await execute_tool({"action_id": "act_test", "parameters": {}})
 
     @pytest.mark.asyncio
     async def test_api_error_propagates(self):
-        """execute_action propagates APIError to centralized handler."""
+        """execute_tool propagates APIError to centralized handler."""
         client = _mock_client(
             execute=AsyncMock(side_effect=APIError("API failed", status_code=500)),
         )
         with patch("fastn_mcp.server._get_client", return_value=client), \
              pytest.raises(APIError):
-            await execute_action({"action_id": "act_test", "parameters": {}})
+            await execute_tool({"action_id": "act_test", "parameters": {}})
 
     @pytest.mark.asyncio
     async def test_closes_client(self):
-        """execute_action always closes the client even on error."""
+        """execute_tool always closes the client even on error."""
         client = _mock_client(
             execute=AsyncMock(side_effect=FastnError("boom")),
         )
         with patch("fastn_mcp.server._get_client", return_value=client), \
              pytest.raises(FastnError):
-            await execute_action({
+            await execute_tool({
                 "action_id": "act_test",
                 "parameters": {},
             })
@@ -468,7 +472,7 @@ class TestDiscoverTools:
             {"name": "slack", "display_name": "Slack", "category": "messaging", "tool_count": 12},
             {"name": "jira", "display_name": "Jira", "category": "project-management", "tool_count": 8},
         ]
-        client = _mock_client(admin_connectors_list=MagicMock(return_value=mock_connectors))
+        client = _mock_client(connectors_list=MagicMock(return_value=mock_connectors))
 
         with patch("fastn_mcp.server._get_client", return_value=client):
             result = await discover_tools({})
@@ -478,8 +482,11 @@ class TestDiscoverTools:
         assert len(data["connectors"]) == 2
         assert data["connectors"][0]["name"] == "slack"
         assert data["connectors"][1]["name"] == "jira"
-        assert "app.fastn.dev" in data["connect_url"]
-        assert "workspace_123" in data["connect_url"]
+        # Each connector has connect_url with workspace/agent path
+        assert "app.ucl.dev" in data["connectors"][0]["connect_url"]
+        assert "workspace_123" in data["connectors"][0]["connect_url"]
+        # Only name + connect_url — no extra fields
+        assert set(data["connectors"][0].keys()) == {"name", "connect_url"}
 
     @pytest.mark.asyncio
     async def test_filter_by_query(self):
@@ -489,7 +496,7 @@ class TestDiscoverTools:
             {"name": "jira", "display_name": "Jira", "category": "project-management", "tool_count": 8},
             {"name": "gmail", "display_name": "Gmail", "category": "email", "tool_count": 5},
         ]
-        client = _mock_client(admin_connectors_list=MagicMock(return_value=mock_connectors))
+        client = _mock_client(connectors_list=MagicMock(return_value=mock_connectors))
 
         with patch("fastn_mcp.server._get_client", return_value=client):
             result = await discover_tools({"query": "jira"})
@@ -504,7 +511,7 @@ class TestDiscoverTools:
         mock_connectors = [
             {"name": "ms_teams", "display_name": "Microsoft Teams", "category": "messaging", "tool_count": 6},
         ]
-        client = _mock_client(admin_connectors_list=MagicMock(return_value=mock_connectors))
+        client = _mock_client(connectors_list=MagicMock(return_value=mock_connectors))
 
         with patch("fastn_mcp.server._get_client", return_value=client):
             result = await discover_tools({"query": "Microsoft"})
@@ -516,7 +523,7 @@ class TestDiscoverTools:
     @pytest.mark.asyncio
     async def test_auth_error_propagates(self):
         """discover_tools propagates AuthError to centralized handler."""
-        client = _mock_client(admin_connectors_list=MagicMock(side_effect=AuthError("Token expired")))
+        client = _mock_client(connectors_list=MagicMock(side_effect=AuthError("Token expired")))
 
         with patch("fastn_mcp.server._get_client", return_value=client), \
              pytest.raises(AuthError):
@@ -525,11 +532,71 @@ class TestDiscoverTools:
     @pytest.mark.asyncio
     async def test_closes_client(self):
         """discover_tools always closes the client even on error."""
-        client = _mock_client(admin_connectors_list=MagicMock(side_effect=FastnError("boom")))
+        client = _mock_client(connectors_list=MagicMock(side_effect=FastnError("boom")))
 
         with patch("fastn_mcp.server._get_client", return_value=client), \
              pytest.raises(FastnError):
             await discover_tools({})
+
+        client.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# list_skills tests
+# ---------------------------------------------------------------------------
+
+class TestListSkills:
+    @pytest.mark.asyncio
+    async def test_success_returns_all(self):
+        """list_skills returns all skills with id, name, description."""
+        mock_skills = [
+            {"id": "sk_001", "projectId": "proj_abc", "name": "Onboarding", "description": "Customer onboarding workflow", "createdAt": "2025-01-15", "updatedAt": "2025-01-20"},
+            {"id": "sk_002", "projectId": "proj_abc", "name": "Incident Response", "description": "Handle production incidents", "createdAt": "2025-02-01", "updatedAt": "2025-02-05"},
+        ]
+        client = _mock_client(skills_list=AsyncMock(return_value=mock_skills))
+
+        with patch("fastn_mcp.server._get_client", return_value=client):
+            result = await list_skills({})
+
+        data = _parse_result(result)
+        assert data["total"] == 2
+        assert len(data["skills"]) == 2
+        assert data["skills"][0]["id"] == "sk_001"
+        assert data["skills"][0]["name"] == "Onboarding"
+        assert data["skills"][0]["description"] == "Customer onboarding workflow"
+        assert data["skills"][1]["name"] == "Incident Response"
+        # Only id, name, description — no extra fields
+        assert set(data["skills"][0].keys()) == {"id", "name", "description"}
+
+    @pytest.mark.asyncio
+    async def test_empty(self):
+        """list_skills returns empty list when no skills exist."""
+        client = _mock_client(skills_list=AsyncMock(return_value=[]))
+
+        with patch("fastn_mcp.server._get_client", return_value=client):
+            result = await list_skills({})
+
+        data = _parse_result(result)
+        assert data["total"] == 0
+        assert data["skills"] == []
+
+    @pytest.mark.asyncio
+    async def test_auth_error_propagates(self):
+        """list_skills propagates AuthError to centralized handler."""
+        client = _mock_client(skills_list=AsyncMock(side_effect=AuthError("Token expired")))
+
+        with patch("fastn_mcp.server._get_client", return_value=client), \
+             pytest.raises(AuthError):
+            await list_skills({})
+
+    @pytest.mark.asyncio
+    async def test_closes_client(self):
+        """list_skills always closes the client even on error."""
+        client = _mock_client(skills_list=AsyncMock(side_effect=FastnError("boom")))
+
+        with patch("fastn_mcp.server._get_client", return_value=client), \
+             pytest.raises(FastnError):
+            await list_skills({})
 
         client.close.assert_called_once()
 
@@ -681,7 +748,7 @@ class TestTopLevelErrorHandling:
     async def test_auth_error_returns_invalid_token(self):
         """AuthError escaping a handler returns INVALID_TOKEN."""
         with patch("fastn_mcp.server._get_client", side_effect=AuthError("Token expired")):
-            result = await handle_call_tool("execute_action", {
+            result = await handle_call_tool("execute_tool", {
                 "action_id": "act_test", "parameters": {},
             })
 
@@ -918,10 +985,11 @@ class TestPerModeRouting:
             app = create_starlette_app("shttp-only", auth_enabled=False)
 
         # 3 servers: all tools, ucl tools, ucl tools without list_projects
-        assert len(server_tool_counts) == 3
-        assert server_tool_counts[0] == len(TOOLS)           # all: 10
-        assert server_tool_counts[1] == len(UCL_TOOL_NAMES)  # ucl: 4
-        assert server_tool_counts[2] == len(UCL_TOOL_NAMES) - 1  # ucl-proj: 3
+        assert len(server_tool_counts) == 4
+        assert server_tool_counts[0] == len(TOOLS)               # all: 11
+        assert server_tool_counts[1] == len(UCL_TOOL_NAMES)      # ucl: 5
+        assert server_tool_counts[2] == len(UCL_TOOL_NAMES) - 1  # ucl-proj: 4
+        assert server_tool_counts[3] == len(UCL_TOOL_NAMES) - 2  # ucl-proj-skill: 3
 
     def test_sse_routes_have_correct_endpoints(self):
         """SSE mode creates 3 per-mode SSE routes."""
@@ -2850,29 +2918,37 @@ class TestListProjects:
 # ---------------------------------------------------------------------------
 
 class TestParseModePath:
-    """Tests for _parse_mode_from_path — URL sub-path → (mode, project_id)."""
+    """Tests for _parse_mode_from_path — URL sub-path → (mode, project_id, skill_id)."""
 
     def test_root_returns_agent(self):
         from fastn_mcp.server import _parse_mode_from_path
-        assert _parse_mode_from_path("/") == ("agent", None)
+        assert _parse_mode_from_path("/") == ("agent", None, None)
 
     def test_empty_returns_agent(self):
         from fastn_mcp.server import _parse_mode_from_path
-        assert _parse_mode_from_path("") == ("agent", None)
+        assert _parse_mode_from_path("") == ("agent", None, None)
 
     def test_ucl_returns_ucl_mode(self):
         from fastn_mcp.server import _parse_mode_from_path
-        assert _parse_mode_from_path("/ucl") == ("ucl", None)
+        assert _parse_mode_from_path("/ucl") == ("ucl", None, None)
 
     def test_ucl_with_project_id(self):
         from fastn_mcp.server import _parse_mode_from_path
-        mode, pid = _parse_mode_from_path("/ucl/c1653d47-abcd-1234-ef01-567890abcdef")
+        mode, pid, sid = _parse_mode_from_path("/ucl/c1653d47-abcd-1234-ef01-567890abcdef")
         assert mode == "ucl"
         assert pid == "c1653d47-abcd-1234-ef01-567890abcdef"
+        assert sid is None
+
+    def test_ucl_with_project_and_skill(self):
+        from fastn_mcp.server import _parse_mode_from_path
+        mode, pid, sid = _parse_mode_from_path("/ucl/c1653d47-abcd-1234-ef01-567890abcdef/a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        assert mode == "ucl"
+        assert pid == "c1653d47-abcd-1234-ef01-567890abcdef"
+        assert sid == "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 
     def test_unknown_path_returns_agent(self):
         from fastn_mcp.server import _parse_mode_from_path
-        assert _parse_mode_from_path("/something") == ("agent", None)
+        assert _parse_mode_from_path("/something") == ("agent", None, None)
 
 
 class TestServerMode:
@@ -2972,14 +3048,14 @@ class TestPerModeServers:
         """UCL tool list contains exactly the expected tools."""
         ucl_tools = [t for t in TOOLS if t.name in UCL_TOOL_NAMES]
         names = {t.name for t in ucl_tools}
-        assert names == {"find_tools", "execute_action", "discover_tools", "list_projects"}
+        assert names == {"find_tools", "execute_tool", "discover_tools", "list_skills", "list_projects"}
 
     @pytest.mark.asyncio
     async def test_ucl_tools_no_proj_correct(self):
         """UCL-with-project tool list excludes list_projects."""
         ucl_no_proj = [t for t in TOOLS if t.name in (UCL_TOOL_NAMES - {"list_projects"})]
         names = {t.name for t in ucl_no_proj}
-        assert names == {"find_tools", "execute_action", "discover_tools"}
+        assert names == {"find_tools", "execute_tool", "discover_tools", "list_skills"}
         assert "list_projects" not in names
 
     @pytest.mark.asyncio
@@ -2992,4 +3068,4 @@ class TestPerModeServers:
 
     def test_ucl_tool_names_constant(self):
         """UCL_TOOL_NAMES contains exactly the expected tool names."""
-        assert UCL_TOOL_NAMES == {"find_tools", "execute_action", "discover_tools", "list_projects"}
+        assert UCL_TOOL_NAMES == {"find_tools", "execute_tool", "discover_tools", "list_skills", "list_projects"}
