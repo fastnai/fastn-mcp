@@ -63,10 +63,7 @@ fastn-mcp --sse --shttp --port 8000
 
 ```bash
 docker build -t fastn-mcp .
-docker run -p 8000:8000 \
-  -e FASTN_API_KEY=your-key \
-  -e FASTN_PROJECT_ID=your-project-id \
-  fastn-mcp
+docker run -p 8000:8000 --env-file .env fastn-mcp
 ```
 
 ## MCP Tools
@@ -193,10 +190,7 @@ fastn-mcp --sse --port 8000 --no-auth
 
 ```bash
 docker build -t fastn-mcp .
-docker run -p 8000:8000 \
-  -e FASTN_API_KEY=your-key \
-  -e FASTN_PROJECT_ID=your-project-id \
-  fastn-mcp
+docker run -p 8000:8000 --env-file .env fastn-mcp
 ```
 
 ### Docker Compose
@@ -207,16 +201,76 @@ docker compose up -d
 
 ### Environment Variables
 
+Create a `.env` file with your credentials:
+
+```bash
+# Required
+FASTN_API_KEY=your-api-key
+FASTN_PROJECT_ID=your-project-id
+
+# Optional
+FASTN_MCP_PORT=8000
+FASTN_MCP_HOST=0.0.0.0
+FASTN_MCP_SERVER_URL=https://your-public-url.ngrok-free.dev
+FASTN_MCP_TRANSPORT=both
+FASTN_MCP_NO_AUTH=false
+FASTN_MCP_VERBOSE=false
+```
+
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `FASTN_API_KEY` | Yes | Your Fastn API key from [app.fastn.dev](https://app.fastn.dev) |
 | `FASTN_PROJECT_ID` | Yes | Your workspace/project ID |
 | `FASTN_MCP_PORT` | No | Server port (default: `8000`) |
 | `FASTN_MCP_HOST` | No | Bind address (default: `0.0.0.0`) |
-| `FASTN_MCP_SERVER_URL` | No | Public URL for OAuth metadata |
+| `FASTN_MCP_SERVER_URL` | No | Public URL for OAuth metadata (e.g. ngrok URL) |
 | `FASTN_MCP_NO_AUTH` | No | Set to `true` to disable OAuth (dev only) |
 | `FASTN_MCP_TRANSPORT` | No | Transport mode: `sse`, `shttp`, `both` (default: `both`) |
 | `FASTN_MCP_VERBOSE` | No | Set to `true` for debug logging |
+
+## Exposing with ngrok
+
+To make your local MCP server accessible to remote AI platforms (Lovable, Bolt, v0), use [ngrok](https://ngrok.com) to create a public tunnel:
+
+### 1. Start the MCP server
+
+```bash
+fastn-mcp --shttp --port 8000 --verbose
+```
+
+### 2. Start ngrok tunnel
+
+In a separate terminal:
+
+```bash
+ngrok http 8000
+```
+
+### 3. Connect with the public URL
+
+Copy the ngrok forwarding URL (e.g. `https://abc123.ngrok-free.dev`) and pass it as `--server-url` so OAuth metadata resolves correctly:
+
+```bash
+fastn-mcp --shttp --port 8000 \
+  --server-url https://abc123.ngrok-free.dev \
+  --verbose
+```
+
+The MCP endpoint is now available at:
+
+| Endpoint | URL |
+|----------|-----|
+| Streamable HTTP | `https://abc123.ngrok-free.dev/shttp` |
+| SSE | `https://abc123.ngrok-free.dev/sse` |
+| Discovery only | `https://abc123.ngrok-free.dev/shttp/ucl` |
+
+### Docker + ngrok
+
+```bash
+docker run -p 8000:8000 --env-file .env \
+  -e FASTN_MCP_SERVER_URL=https://abc123.ngrok-free.dev \
+  fastn-mcp
+```
 
 ## Claude Desktop Configuration
 
