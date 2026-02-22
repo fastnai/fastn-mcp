@@ -31,3 +31,9 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Fastn credentials
+.fastn/
+
+# Claude Code local settings
+.claude/
