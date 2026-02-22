@@ -1,5 +1,5 @@
 [project]
-name = "fastn-mcp-server"
+name = "fastn-mcp"
 version = "0.1.0"
 description = "Fastn MCP Server — secure MCP gateway for 250+ enterprise systems with fully managed auth, governed access, and sub-second execution"
 readme = "README.md"

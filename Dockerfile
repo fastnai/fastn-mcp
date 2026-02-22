@@ -1,13 +1,14 @@
 # ── Build stage ────────────────────────────────────────────────────────
 FROM python:3.12-slim AS builder
 
-WORKDIR /build
+WORKDIR /fastn-mcp
 
 # Install build dependencies
 RUN pip install --no-cache-dir hatchling
 
 # Copy project files
 COPY pyproject.toml .
+COPY README.md .
 COPY fastn_mcp/ fastn_mcp/
 
 # Build wheel
@@ -49,11 +50,14 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${FASTN_MCP_PORT}/.well-known/oauth-protected-resource')" || exit 1
 
-# Switch to non-root user
-USER fastn
+
 
 # Entrypoint script handles env-to-CLI flag translation
 COPY --chown=fastn:fastn docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
+RUN ls /app
+
+# Switch to non-root user
+USER fastn
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
