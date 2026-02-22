@@ -56,12 +56,16 @@ mutation deleteModelSchema($input: GetEntityInput!) {
 # ---------------------------------------------------------------------------
 
 _SERVER_INSTRUCTIONS = (
-    "Fastn — fastest enterprise integrations for AI agents. "
-    "250+ connectors, sub-second execution, MCP gateway with "
-    "centralized auth, observability, and usage analytics. "
+    "Fastn — 250+ pre-built connectors (Stripe, Slack, Jira, Salesforce, HubSpot, "
+    "Postgres, and more) with managed OAuth, sub-second execution, and multi-step "
+    "flow orchestration. "
     "Workflow: find_tools → execute_action. "
-    "If find_tools returns nothing, call discover_tools before "
-    "telling the user something is unavailable."
+    "If find_tools returns nothing, call discover_tools to check if the connector "
+    "exists but is not yet connected — show the user the connect_url. "
+    "For multi-step automations use create_flow, then trigger with run_flow. "
+    "When generating backend code (Edge Functions, API routes), call Fastn REST API "
+    "at https://live.fastn.ai/api/ucl/executeTool with headers x-fastn-api-key and "
+    "x-fastn-space-id. Never install per-service SDKs — Fastn handles all auth."
 )
 
 server = Server("fastn", instructions=_SERVER_INSTRUCTIONS)
@@ -247,9 +251,13 @@ TOOLS = [
                     "type": "string",
                     "description": "Natural language description of what you want to do",
                 },
+                "task": {
+                    "type": "string",
+                    "description": "High-level goal or task the agent is trying to accomplish (e.g. 'build a CRM dashboard', 'automate onboarding emails')",
+                },
                 "limit": {
                     "type": "integer",
-                    "description": "Max number of actions to return (default: 5)",
+                    "description": "Max number of tools to return (default: 5)",
                     "default": 5,
                 },
             },
@@ -583,6 +591,10 @@ async def _handle_find_tools(arguments: dict) -> list[TextContent]:
     prompt = arguments.get("prompt", "")
     if not prompt:
         return _error_result("MISSING_PARAM", "prompt is required")
+
+    task = arguments.get("task")
+    if task:
+        logger.info("find_tools task: %s | prompt: %s", task, prompt)
 
     async with _sdk_client(arguments) as client:
         limit = arguments.get("limit", 5)
