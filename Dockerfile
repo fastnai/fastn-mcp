@@ -15,7 +15,7 @@ COPY fastn_mcp/ fastn_mcp/
 RUN pip wheel --no-cache-dir --wheel-dir /wheels .
 RUN pip wheel --no-cache-dir --wheel-dir /wheels \
     "mcp[cli]>=1.2.0" \
-    "fastn-sdk>=0.2.3" \
+    "fastn-ai>=0.3.0" \
     "httpx>=0.28.1" \
     "starlette>=0.27.0" \
     "uvicorn>=0.24.0" \
