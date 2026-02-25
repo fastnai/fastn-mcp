@@ -45,7 +45,7 @@ from fastn_mcp.server import (
     _handle_list_projects as list_projects,
     handle_call_tool,
     handle_list_tools,
-    UCL_TOOL_NAMES,
+    FASTN_TOOL_NAMES,
     TOOLS,
 )
 
@@ -603,7 +603,7 @@ class TestListConnectors:
         assert data["connectors"][0]["name"] == "slack"
         assert data["connectors"][1]["name"] == "jira"
         # Each connector has a deep link with query param for the connector name
-        assert "app.ucl.dev" in data["connectors"][0]["connect_url"]
+        assert "app.fastn.ai" in data["connectors"][0]["connect_url"]
         assert "workspace_123" in data["connectors"][0]["connect_url"]
         assert "open=managetools" in data["connectors"][0]["connect_url"]
         assert "query=Slack" in data["connectors"][0]["connect_url"]
@@ -865,7 +865,7 @@ class TestConfigureConnectKitAuth:
         assert data["user_id"] == "user123"
         assert data["resolved_userinfo_url"] == "https://myapp.auth0.com/userinfo"
         assert "review_url" in data
-        assert "/ucl/configure-auth" in data["review_url"]
+        assert "/fastn/configure-auth" in data["review_url"]
         assert "next_step" in data
         mock_gql.assert_called_once()
         # Verify the GraphQL call used the client and correct userinfo URL
@@ -1491,8 +1491,8 @@ class TestPerModeRouting:
 
     Each URL path should reach the Route with the correct tool set:
       /shttp                   → Route("/shttp")                  → all tools (10)
-      /shttp/ucl               → Route("/shttp/ucl")              → discovery tools (4)
-      /shttp/ucl/{project_id}  → Route("/shttp/ucl/{project_id}") → discovery tools (3)
+      /shttp/tools               → Route("/shttp/tools")              → discovery tools (4)
+      /shttp/tools/{project_id}  → Route("/shttp/tools/{project_id}") → discovery tools (3)
 
     NOTE: We use Route (exact match), not Mount (prefix match), because
     Starlette's Mount appends /{path:path} to the regex — so Mount("/shttp")
@@ -1509,27 +1509,27 @@ class TestPerModeRouting:
                 return route, child_scope
         return None, None
 
-    def test_shttp_ucl_matches_ucl_route(self):
-        """POST /shttp/ucl should match Route('/shttp/ucl')."""
+    def test_shttp_fastn_matches_fastn_route(self):
+        """POST /shttp/tools should match Route('/shttp/tools')."""
         from fastn_mcp.server import create_starlette_app
 
         app = create_starlette_app("shttp-only", auth_enabled=False)
-        route, child_scope = self._find_first_match(app, "/shttp/ucl")
+        route, child_scope = self._find_first_match(app, "/shttp/tools")
 
-        assert route is not None, "No route matched /shttp/ucl"
-        assert route.path == "/shttp/ucl", f"Expected /shttp/ucl but matched {route.path}"
+        assert route is not None, "No route matched /shttp/tools"
+        assert route.path == "/shttp/tools", f"Expected /shttp/tools but matched {route.path}"
 
-    def test_shttp_ucl_project_matches_project_route(self):
-        """POST /shttp/ucl/<uuid> should match Route('/shttp/ucl/{project_id}')."""
+    def test_shttp_fastn_project_matches_project_route(self):
+        """POST /shttp/tools/<uuid> should match Route('/shttp/tools/{project_id}')."""
         from fastn_mcp.server import create_starlette_app
 
         app = create_starlette_app("shttp-only", auth_enabled=False)
         uuid = "12345678-1234-1234-1234-123456789abc"
-        route, child_scope = self._find_first_match(app, f"/shttp/ucl/{uuid}")
+        route, child_scope = self._find_first_match(app, f"/shttp/tools/{uuid}")
 
-        assert route is not None, f"No route matched /shttp/ucl/{uuid}"
-        assert route.path == "/shttp/ucl/{project_id:path}", \
-            f"Expected /shttp/ucl/{{project_id:path}} but matched {route.path}"
+        assert route is not None, f"No route matched /shttp/tools/{uuid}"
+        assert route.path == "/shttp/tools/{project_id:path}", \
+            f"Expected /shttp/tools/{{project_id:path}} but matched {route.path}"
 
     def test_shttp_all_matches_shttp_route(self):
         """POST /shttp should match Route('/shttp')."""
@@ -1542,12 +1542,12 @@ class TestPerModeRouting:
         assert route.path == "/shttp", f"Expected /shttp but matched {route.path}"
 
     def test_shttp_routes_dont_cross_match(self):
-        """/shttp/ucl should NOT match Route('/shttp') — only its own route."""
+        """/shttp/tools should NOT match Route('/shttp') — only its own route."""
         from fastn_mcp.server import create_starlette_app
         from starlette.routing import Match
 
         app = create_starlette_app("shttp-only", auth_enabled=False)
-        scope = {"type": "http", "path": "/shttp/ucl", "method": "POST"}
+        scope = {"type": "http", "path": "/shttp/tools", "method": "POST"}
 
         shttp_route = None
         for route in app.routes:
@@ -1557,11 +1557,11 @@ class TestPerModeRouting:
 
         if shttp_route:
             match, _ = shttp_route.matches(scope)
-            assert match != Match.FULL, "/shttp Route should NOT match /shttp/ucl"
+            assert match != Match.FULL, "/shttp Route should NOT match /shttp/tools"
 
     def test_per_mode_server_tool_counts(self):
         """Verify that _create_mcp_server is called with correct tool counts."""
-        from fastn_mcp.server import create_starlette_app, _create_mcp_server, TOOLS, UCL_TOOL_NAMES
+        from fastn_mcp.server import create_starlette_app, _create_mcp_server, TOOLS, FASTN_TOOL_NAMES
 
         server_tool_counts = []
         original = _create_mcp_server
@@ -1573,12 +1573,12 @@ class TestPerModeRouting:
         with patch("fastn_mcp.server._create_mcp_server", side_effect=tracking_create):
             app = create_starlette_app("shttp-only", auth_enabled=False)
 
-        # 3 servers: all tools, ucl tools, ucl tools without list_projects
+        # 3 servers: all tools, fastn tools, fastn tools without list_projects
         assert len(server_tool_counts) == 4
         assert server_tool_counts[0] == len(TOOLS)               # all: 11
-        assert server_tool_counts[1] == len(UCL_TOOL_NAMES)      # ucl: 5
-        assert server_tool_counts[2] == len(UCL_TOOL_NAMES) - 1  # ucl-proj: 4
-        assert server_tool_counts[3] == len(UCL_TOOL_NAMES) - 2  # ucl-proj-skill: 3
+        assert server_tool_counts[1] == len(FASTN_TOOL_NAMES)      # fastn: 5
+        assert server_tool_counts[2] == len(FASTN_TOOL_NAMES) - 1  # fastn-proj: 4
+        assert server_tool_counts[3] == len(FASTN_TOOL_NAMES) - 2  # fastn-proj-skill: 3
 
     def test_sse_routes_have_correct_endpoints(self):
         """SSE mode creates 3 per-mode SSE routes."""
@@ -1590,8 +1590,8 @@ class TestPerModeRouting:
         sse_routes = [r for r in app.routes if isinstance(r, Route) and r.path.startswith("/sse")]
         sse_paths = [r.path for r in sse_routes]
         assert "/sse" in sse_paths
-        assert "/sse/ucl" in sse_paths
-        assert "/sse/ucl/{project_id}" in sse_paths
+        assert "/sse/tools" in sse_paths
+        assert "/sse/tools/{project_id}" in sse_paths
 
     def test_shttp_routes_have_all_three(self):
         """shttp-only mode creates 3 Route entries for /shttp paths."""
@@ -1604,7 +1604,7 @@ class TestPerModeRouting:
                         hasattr(r, "path") and "/shttp" in r.path]
         shttp_paths = sorted(r.path for r in shttp_routes)
         assert "/shttp" in shttp_paths
-        assert "/shttp/ucl" in shttp_paths
+        assert "/shttp/tools" in shttp_paths
 
 
 class TestRootEndpoint:
@@ -1626,12 +1626,12 @@ class TestRootEndpoint:
             paths = [e["path"] for e in data["endpoints"]]
             # shttp mode combinations
             assert "/shttp" in paths
-            assert "/shttp/ucl" in paths
-            assert "/shttp/ucl/{project_id}" in paths
+            assert "/shttp/tools" in paths
+            assert "/shttp/tools/{project_id}" in paths
             # SSE mode combinations
             assert "/sse" in paths
-            assert "/sse/ucl" in paths
-            assert "/sse/ucl/{project_id}" in paths
+            assert "/sse/tools" in paths
+            assert "/sse/tools/{project_id}" in paths
             assert "/messages/" in paths
             assert data["auth"] == "disabled"
 
@@ -1649,7 +1649,7 @@ class TestRootEndpoint:
             data = resp.json()
             paths = [e["path"] for e in data["endpoints"]]
             assert "/shttp" in paths
-            assert "/shttp/ucl" in paths
+            assert "/shttp/tools" in paths
             assert "/sse" not in paths
             assert "/messages/" not in paths
 
@@ -1667,7 +1667,7 @@ class TestRootEndpoint:
             data = resp.json()
             paths = [e["path"] for e in data["endpoints"]]
             assert "/sse" in paths
-            assert "/sse/ucl" in paths
+            assert "/sse/tools" in paths
             assert "/messages/" in paths
             assert "/shttp" not in paths
 
@@ -1701,14 +1701,14 @@ class TestRootEndpoint:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/")
             data = resp.json()
-            # modes dict with agent and ucl
+            # modes dict with agent and fastn
             assert "modes" in data
             assert "agent" in data["modes"]
-            assert "ucl" in data["modes"]
+            assert "tools" in data["modes"]
             all_tools = data["modes"]["agent"]["tools"]
-            ucl_tools = data["modes"]["ucl"]["tools"]
+            fastn_tools = data["modes"]["tools"]["tools"]
             assert len(all_tools) == len(TOOLS)
-            assert set(ucl_tools) == UCL_TOOL_NAMES
+            assert set(fastn_tools) == FASTN_TOOL_NAMES
 
     @pytest.mark.asyncio
     async def test_root_uses_server_url_for_endpoint_urls(self):
@@ -1793,8 +1793,8 @@ class TestCLI:
 
     def test_server_url_flag(self):
         """CLI parses --server-url flag."""
-        args = self._make_parser().parse_args(["--server-url", "https://mcp.ucl.dev"])
-        assert args.server_url == "https://mcp.ucl.dev"
+        args = self._make_parser().parse_args(["--server-url", "https://mcp.live.fastn.ai"])
+        assert args.server_url == "https://mcp.live.fastn.ai"
 
     def test_verbose_flag(self):
         """CLI parses --verbose / -v flag."""
@@ -2570,9 +2570,9 @@ class TestValidateRedirectUri:
         from fastn_mcp.auth import _validate_redirect_uri
         assert _validate_redirect_uri("https://api.bolt.new/callback") is True
 
-    def test_mcp_ucl_dev(self):
+    def test_mcp_fastn_ai(self):
         from fastn_mcp.auth import _validate_redirect_uri
-        assert _validate_redirect_uri("https://mcp.ucl.dev/callback") is True
+        assert _validate_redirect_uri("https://mcp.live.fastn.ai/callback") is True
 
     def test_rejected_unknown_domain(self):
         from fastn_mcp.auth import _validate_redirect_uri
@@ -3517,21 +3517,21 @@ class TestParseModePath:
         from fastn_mcp.server import _parse_mode_from_path
         assert _parse_mode_from_path("") == ("agent", None, None)
 
-    def test_ucl_returns_ucl_mode(self):
+    def test_fastn_returns_fastn_mode(self):
         from fastn_mcp.server import _parse_mode_from_path
-        assert _parse_mode_from_path("/ucl") == ("ucl", None, None)
+        assert _parse_mode_from_path("/tools") == ("tools", None, None)
 
-    def test_ucl_with_project_id(self):
+    def test_fastn_with_project_id(self):
         from fastn_mcp.server import _parse_mode_from_path
-        mode, pid, sid = _parse_mode_from_path("/ucl/c1653d47-abcd-1234-ef01-567890abcdef")
-        assert mode == "ucl"
+        mode, pid, sid = _parse_mode_from_path("/tools/c1653d47-abcd-1234-ef01-567890abcdef")
+        assert mode == "tools"
         assert pid == "c1653d47-abcd-1234-ef01-567890abcdef"
         assert sid is None
 
-    def test_ucl_with_project_and_skill(self):
+    def test_fastn_with_project_and_skill(self):
         from fastn_mcp.server import _parse_mode_from_path
-        mode, pid, sid = _parse_mode_from_path("/ucl/c1653d47-abcd-1234-ef01-567890abcdef/a1b2c3d4-e5f6-7890-abcd-ef1234567890")
-        assert mode == "ucl"
+        mode, pid, sid = _parse_mode_from_path("/tools/c1653d47-abcd-1234-ef01-567890abcdef/a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+        assert mode == "tools"
         assert pid == "c1653d47-abcd-1234-ef01-567890abcdef"
         assert sid == "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 
@@ -3562,27 +3562,27 @@ class TestServerMode:
         assert len(tools) == len(TOOLS)
 
     @pytest.mark.asyncio
-    async def test_ucl_mode_via_module_global(self):
-        """Module-level _server_mode='ucl' returns UCL tools (stdio)."""
-        _server_mod._server_mode = "ucl"
+    async def test_fastn_mode_via_module_global(self):
+        """Module-level _server_mode='fastn' returns Fastn tools (stdio)."""
+        _server_mod._server_mode = "tools"
         tools = await handle_list_tools()
         names = {t.name for t in tools}
-        assert names == UCL_TOOL_NAMES
+        assert names == FASTN_TOOL_NAMES
 
     @pytest.mark.asyncio
-    async def test_ucl_mode_with_project_excludes_list_projects(self):
-        """UCL mode with project_id excludes list_projects."""
-        _server_mod._server_mode = "ucl"
+    async def test_fastn_mode_with_project_excludes_list_projects(self):
+        """Fastn mode with project_id excludes list_projects."""
+        _server_mod._server_mode = "tools"
         _server_mod._server_project_id = "proj_123"
         tools = await handle_list_tools()
         names = {t.name for t in tools}
-        assert names == UCL_TOOL_NAMES - {"list_projects"}
+        assert names == FASTN_TOOL_NAMES - {"list_projects"}
         assert "list_projects" not in names
 
     @pytest.mark.asyncio
-    async def test_ucl_mode_excludes_flow_tools(self):
-        """In 'ucl' mode, flow tools are not returned."""
-        _server_mod._server_mode = "ucl"
+    async def test_fastn_mode_excludes_flow_tools(self):
+        """In 'fastn' mode, flow tools are not returned."""
+        _server_mod._server_mode = "tools"
         tools = await handle_list_tools()
         names = {t.name for t in tools}
         agent_tools = {"list_flows", "run_flow", "delete_flow", "generate_flow",
@@ -3633,17 +3633,17 @@ class TestPerModeServers:
         assert srv is not None
 
     @pytest.mark.asyncio
-    async def test_ucl_tools_correct(self):
-        """UCL tool list contains exactly the expected tools."""
-        ucl_tools = [t for t in TOOLS if t.name in UCL_TOOL_NAMES]
-        names = {t.name for t in ucl_tools}
+    async def test_fastn_tools_correct(self):
+        """Fastn tool list contains exactly the expected tools."""
+        fastn_tools = [t for t in TOOLS if t.name in FASTN_TOOL_NAMES]
+        names = {t.name for t in fastn_tools}
         assert names == {"find_tools", "execute_tool", "list_connectors", "list_skills", "list_projects"}
 
     @pytest.mark.asyncio
-    async def test_ucl_tools_no_proj_correct(self):
-        """UCL-with-project tool list excludes list_projects."""
-        ucl_no_proj = [t for t in TOOLS if t.name in (UCL_TOOL_NAMES - {"list_projects"})]
-        names = {t.name for t in ucl_no_proj}
+    async def test_fastn_tools_no_proj_correct(self):
+        """Fastn-with-project tool list excludes list_projects."""
+        fastn_no_proj = [t for t in TOOLS if t.name in (FASTN_TOOL_NAMES - {"list_projects"})]
+        names = {t.name for t in fastn_no_proj}
         assert names == {"find_tools", "execute_tool", "list_connectors", "list_skills"}
         assert "list_projects" not in names
 
@@ -3651,10 +3651,10 @@ class TestPerModeServers:
     async def test_per_mode_server_call_tool_dispatches(self):
         """Per-mode servers share the same call_tool dispatch logic."""
         from fastn_mcp.server import _create_mcp_server
-        ucl_tools = [t for t in TOOLS if t.name in UCL_TOOL_NAMES]
-        srv = _create_mcp_server(ucl_tools)
+        fastn_tools = [t for t in TOOLS if t.name in FASTN_TOOL_NAMES]
+        srv = _create_mcp_server(fastn_tools)
         assert srv is not None
 
-    def test_ucl_tool_names_constant(self):
-        """UCL_TOOL_NAMES contains exactly the expected tool names."""
-        assert UCL_TOOL_NAMES == {"find_tools", "execute_tool", "list_connectors", "list_skills", "list_projects"}
+    def test_fastn_tool_names_constant(self):
+        """FASTN_TOOL_NAMES contains exactly the expected tool names."""
+        assert FASTN_TOOL_NAMES == {"find_tools", "execute_tool", "list_connectors", "list_skills", "list_projects"}

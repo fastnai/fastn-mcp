@@ -2,9 +2,10 @@
 
 Exposes MCP tools for AI agents and apps (Claude Desktop, Cursor, Lovable, and any MCP client):
 
-  UCL:    find_tools, execute_tool, list_connectors, list_skills, list_projects
-  Agent:  list_flows, run_flow, delete_flow, generate_flow*, update_flow*,
-          configure_connect_kit_auth, configure_connect_kit
+  Tools:  find_tools, execute_tool, list_connectors
+  Kit:    configure_connect_kit, configure_connect_kit_auth
+  Admin:  list_projects, list_skills, deploy_flow
+  Agents: list_flows, get_flow_schema, run_flow, delete_flow, generate_flow, update_flow
 
 Transports:
   stdio            Local pipe (Claude Desktop / Cursor)
@@ -22,8 +23,11 @@ import json
 import logging
 import os
 import re as _re
+import time as _time
+import threading
 import uuid
 from contextvars import ContextVar
+from secrets import token_urlsafe
 from typing import Any, Dict, Optional
 
 import anyio
@@ -109,7 +113,7 @@ _SERVER_INSTRUCTIONS = (
     "If any tool returns WORKSPACE_NOT_SET → list_projects, then pass project_id. "
     "For multi-step automations use generate_flow, then trigger with run_flow. "
     "When generating backend code (Edge Functions, API routes), call Fastn REST API "
-    "at https://live.fastn.ai/api/ucl/executeTool with headers x-fastn-api-key and "
+    "at https://live.fastn.ai/api/fastn/executeTool with headers x-fastn-api-key and "
     "x-fastn-space-id. Never install per-service SDKs — Fastn handles all auth."
 )
 
@@ -130,35 +134,137 @@ _active_sse_sessions: set[str] = set()
 # ---------------------------------------------------------------------------
 # Server mode — controls which tools are exposed (set once at startup)
 # ---------------------------------------------------------------------------
-# "agent" → all tools (UCL + flows + config)
-# "ucl"   → UCL tools only
+# "agent" → all tools (Fastn + flows + config)
+# "tools"   → Fastn tools only
 _server_mode: str = "agent"
 _server_project_id: str | None = None
 _server_skill_id: str | None = None
 _server_url: str | None = None
 
-UCL_TOOL_NAMES = {"find_tools", "execute_tool", "list_connectors", "list_skills", "list_projects"}
+# ---------------------------------------------------------------------------
+# Flow builder session store — two-tier (in-memory + optional Firestore)
+# ---------------------------------------------------------------------------
+_FLOW_SESSION_TTL = 1800  # 30 minutes
+_FLOW_SESSION_MAX = 10_000  # max concurrent sessions (prevents OOM)
+_FLOW_SESSION_MAX_USES = 5  # max retrievals before code is consumed
+
+_flow_sessions: Dict[str, tuple[dict, float, int]] = {}  # code → (params, expiry_ts, uses_left)
+_flow_sessions_lock = threading.Lock()
+
+# Optional Firestore client — auto-detected on GCP Cloud Run
+_firestore_db: Any = None
+_FIRESTORE_COLLECTION = "fastn_mcp_flow_sessions"
+
+
+def _init_firestore() -> None:
+    """Try to connect to Firestore. No-op if unavailable (local dev)."""
+    global _firestore_db
+    try:
+        from google.cloud import firestore  # type: ignore[import-untyped]
+        _firestore_db = firestore.AsyncClient()
+        logger.info("Firestore connected — flow sessions shared across instances")
+    except Exception:
+        logger.info("Firestore not available — flow sessions in-memory only")
+
+
+def _evict_expired_sessions() -> None:
+    """Remove expired entries from in-memory store. Caller must hold lock."""
+    now = _time.time()
+    expired = [k for k, (_, exp, uses) in _flow_sessions.items() if exp <= now or uses <= 0]
+    for k in expired:
+        del _flow_sessions[k]
+
+
+async def _store_flow_session(params: dict) -> str:
+    """Store flow builder params, return a cryptographically secure code."""
+    code = token_urlsafe(16)  # 22-char URL-safe, 128-bit entropy
+    expiry = _time.time() + _FLOW_SESSION_TTL
+
+    # Local store
+    with _flow_sessions_lock:
+        if len(_flow_sessions) >= _FLOW_SESSION_MAX:
+            _evict_expired_sessions()
+        if len(_flow_sessions) >= _FLOW_SESSION_MAX:
+            raise RuntimeError("Too many active flow sessions")
+        _flow_sessions[code] = (params, expiry, _FLOW_SESSION_MAX_USES)
+
+    # Firestore (best-effort, for cross-instance sharing)
+    if _firestore_db is not None:
+        try:
+            await _firestore_db.collection(_FIRESTORE_COLLECTION).document(code).set({
+                "params": json.dumps(params),
+                "expiry": expiry,
+                "uses_left": _FLOW_SESSION_MAX_USES,
+            })
+        except Exception as exc:
+            logger.warning("Firestore write failed: %s", exc)
+
+    return code
+
+
+async def _pop_flow_session(code: str) -> dict | None:
+    """Retrieve session params. Allows up to _FLOW_SESSION_MAX_USES reads before expiry."""
+    # Try local first (fast path)
+    with _flow_sessions_lock:
+        entry = _flow_sessions.get(code)
+        if entry is not None:
+            params, expiry, uses_left = entry
+            if _time.time() > expiry or uses_left <= 0:
+                del _flow_sessions[code]
+                return None
+            _flow_sessions[code] = (params, expiry, uses_left - 1)
+            return params
+
+    # Fallback to Firestore (cross-instance)
+    if _firestore_db is not None:
+        try:
+            doc_ref = _firestore_db.collection(_FIRESTORE_COLLECTION).document(code)
+            doc = await doc_ref.get()
+            if doc.exists:
+                data = doc.to_dict()
+                if data.get("expiry", 0) <= _time.time():
+                    await doc_ref.delete()
+                    return None
+                uses_left = data.get("uses_left", 0)
+                if uses_left <= 0:
+                    await doc_ref.delete()
+                    return None
+                await doc_ref.update({"uses_left": uses_left - 1})
+                return json.loads(data["params"])
+        except Exception as exc:
+            logger.warning("Firestore read failed: %s", exc)
+
+    return None
+
+
+def _cleanup_flow_sessions() -> None:
+    """Purge expired in-memory sessions. Called from periodic cleanup loop."""
+    with _flow_sessions_lock:
+        _evict_expired_sessions()
+
+
+FASTN_TOOL_NAMES = {"find_tools", "execute_tool", "list_connectors", "list_skills", "list_projects"}
 
 # Request-scoped project_id — set per-connection (SSE) or per-request (shttp).
 _request_project_id: ContextVar[str | None] = ContextVar("_request_project_id", default=None)
 
-# Request-scoped skill_id — set when URL includes /ucl/{project_id}/{skill_id}.
+# Request-scoped skill_id — set when URL includes /tools/{project_id}/{skill_id}.
 _request_skill_id: ContextVar[str | None] = ContextVar("_request_skill_id", default=None)
 
-_UCL_PATH_RE = _re.compile(r"^/ucl(?:/([a-f0-9-]{36}))?(?:/([a-f0-9-]{36}))?$")
+_FASTN_PATH_RE = _re.compile(r"^/tools(?:/([a-f0-9-]{36}))?(?:/([a-f0-9-]{36}))?$")
 
 
 def _parse_mode_from_path(path: str) -> tuple[str, str | None, str | None]:
     """Parse mode, project_id, and skill_id from URL sub-path.
 
     "/" or ""                    → ("agent", None, None)
-    "/ucl"                      → ("ucl", None, None)
-    "/ucl/<project_id>"         → ("ucl", "<project_id>", None)
-    "/ucl/<project_id>/<skill>" → ("ucl", "<project_id>", "<skill_id>")
+    "/tools"                      → ("tools", None, None)
+    "/tools/<project_id>"         → ("tools", "<project_id>", None)
+    "/tools/<project_id>/<skill>" → ("tools", "<project_id>", "<skill_id>")
     """
-    m = _UCL_PATH_RE.match(path)
+    m = _FASTN_PATH_RE.match(path)
     if m:
-        return "ucl", m.group(1), m.group(2)
+        return "tools", m.group(1), m.group(2)
     return "agent", None, None
 
 
@@ -589,7 +695,7 @@ _THEME_SCHEMA: dict = {
 
 TOOLS = [
     # =====================================================================
-    # UCL TOOLS
+    # TOOLS — Discovery and execution
     # Browse: list_connectors
     # Execute: find_tools → execute_tool
     # =====================================================================
@@ -678,6 +784,9 @@ TOOLS = [
             },
         },
     ),
+    # =====================================================================
+    # ADMIN — Project configuration and management
+    # =====================================================================
     Tool(
         name="list_skills",
         description=(
@@ -697,7 +806,9 @@ TOOLS = [
             "List available projects (workspaces) for the authenticated "
             "user. Call this when any tool returns a WORKSPACE_NOT_SET "
             "error, or when the user wants to switch projects. Returns "
-            "project IDs and names — pass the selected project_id in "
+            "project IDs and names. IMPORTANT: After listing, you MUST "
+            "present the projects to the user and let them choose which "
+            "one to use. Then pass the selected project_id in all "
             "subsequent tool calls."
         ),
         inputSchema={
@@ -705,11 +816,42 @@ TOOLS = [
             "properties": {},
         },
     ),
+    Tool(
+        name="deploy_flow",
+        description=(
+            "Deploy a flow to a specific stage (DRAFT or LIVE). Use this to "
+            "activate flow changes in production. Required after: "
+            "(1) configure_connect_kit_auth — call with "
+            'flow_id="fastnCustomAuth" stage="LIVE", '
+            "(2) any flow created via generate_flow — deploy to LIVE "
+            "when the user is ready to activate it."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "flow_id": {
+                    "type": "string",
+                    "description": "The flow ID to deploy (e.g. 'fastnCustomAuth')",
+                },
+                "stage": {
+                    "type": "string",
+                    "enum": ["DRAFT", "LIVE"],
+                    "description": "Target stage — DRAFT or LIVE",
+                    "default": "LIVE",
+                },
+                "comment": {
+                    "type": "string",
+                    "description": "Optional deployment comment",
+                },
+            },
+            "required": ["flow_id"],
+        },
+    ),
     # =====================================================================
-    # FLOW MANAGEMENT TOOLS
+    # AGENTS — Flow automation
     # Manage saved automations (flows). Use list_flows to see existing
     # flows, run_flow to execute them, delete_flow to remove them.
-    # generate_flow and update_flow are under development.
+    # generate_flow opens an interactive flow builder.
     # =====================================================================
     Tool(
         name="list_flows",
@@ -795,9 +937,10 @@ TOOLS = [
             "to the fastn flow builder where the user can describe what "
             "they want, answer clarifying questions, and see the generated "
             "flow — all without going back and forth through the LLM. "
-            "IMPORTANT: Always present the popup_url to the user as a "
-            "clickable markdown link: [Open Flow Builder](popup_url). "
-            "Do NOT show the raw URL as plain text."
+            "The project_id is resolved automatically from the current "
+            "session context. IMPORTANT: Always present the popup_url to "
+            "the user as a clickable markdown link: "
+            "[Open Flow Builder](popup_url). Do NOT show the raw URL."
         ),
         inputSchema={
             "type": "object",
@@ -832,19 +975,19 @@ TOOLS = [
         },
     ),
     # =====================================================================
-    # CONFIGURATION TOOLS
-    # Setup and configuration for the project.
+    # KIT — Connect Kit auth and styling
     # =====================================================================
     Tool(
         name="configure_connect_kit_auth",
         description=(
             "Register a custom auth provider so Fastn can validate end-user "
-            "tokens. Provide your auth provider URL (OIDC issuer, Keycloak "
-            "realm, Supabase project, or direct userinfo endpoint — the "
-            "correct userinfo URL is resolved automatically), a user JWT "
-            "token to verify it works, and the user's ID so their connector "
-            "connections are saved under their identity. Once configured, "
-            "pass end-user tokens via the X-User-Token header."
+            "tokens. IMPORTANT: You MUST ask the user for both the auth_url "
+            "and user_token values — do NOT fabricate, guess, or use "
+            "placeholder values. The auth_url is ONLY the base URL of the "
+            "auth provider (no tokens, no query params). The user_token is "
+            "a separate parameter — a real JWT string the user provides. "
+            "After configuring, you MUST call deploy_flow with "
+            'flow_id="fastnCustomAuth" and stage="LIVE" to activate it.'
         ),
         inputSchema={
             "type": "object",
@@ -852,15 +995,22 @@ TOOLS = [
                 "auth_url": {
                     "type": "string",
                     "description": (
-                        "Your auth provider URL — can be an OIDC issuer URL, "
-                        "Keycloak realm URL (e.g. https://auth.example.com/realms/myapp), "
-                        "Supabase project URL, or direct userinfo endpoint. "
-                        "The correct userinfo URL is resolved automatically."
+                        "Base URL of the auth provider ONLY — do NOT append "
+                        "tokens or paths. Examples: "
+                        "'https://auth.example.com/realms/myapp' (Keycloak), "
+                        "'https://xyz.supabase.co' (Supabase), "
+                        "'https://accounts.google.com' (OIDC issuer). "
+                        "The userinfo endpoint is resolved automatically."
                     ),
                 },
                 "user_token": {
                     "type": "string",
-                    "description": "A valid user JWT token to verify the auth endpoint works before configuring",
+                    "description": (
+                        "A real JWT token string from the user — ask the user "
+                        "to provide this value. Must be a valid token that "
+                        "works against the auth_url provider. Do NOT use "
+                        "placeholders or variable names."
+                    ),
                 },
                 "user_id": {
                     "type": "string",
@@ -874,39 +1024,6 @@ TOOLS = [
             "required": ["auth_url", "user_token"],
         },
     ),
-    Tool(
-        name="deploy_flow",
-        description=(
-            "Deploy a flow to a specific stage (DRAFT or LIVE). Use this to "
-            "activate flow changes in production. For example, after "
-            "configure_connect_kit_auth you MUST call this with "
-            'flow_id="fastnCustomAuth" and stage="LIVE" to activate the config.'
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "flow_id": {
-                    "type": "string",
-                    "description": "The flow ID to deploy (e.g. 'fastnCustomAuth')",
-                },
-                "stage": {
-                    "type": "string",
-                    "enum": ["DRAFT", "LIVE"],
-                    "description": "Target stage — DRAFT or LIVE",
-                    "default": "LIVE",
-                },
-                "comment": {
-                    "type": "string",
-                    "description": "Optional deployment comment",
-                },
-            },
-            "required": ["flow_id"],
-        },
-    ),
-    # =====================================================================
-    # CONNECT KIT TOOLS
-    # Manage Connect Kit styling and appearance.
-    # =====================================================================
     Tool(
         name="configure_connect_kit",
         description=(
@@ -940,8 +1057,8 @@ async def handle_list_tools() -> list[Tool]:
     """
     if _is_api_key_auth():
         return [t for t in TOOLS if t.name in API_KEY_TOOLS]
-    if _server_mode == "ucl":
-        names = UCL_TOOL_NAMES
+    if _server_mode == "tools":
+        names = FASTN_TOOL_NAMES
         if _server_project_id:
             names = names - {"list_projects"}
         if _server_skill_id:
@@ -1030,45 +1147,48 @@ async def _handle_generate_flow(arguments: dict) -> list[TextContent]:
     if not prompt:
         return _error_result("MISSING_PARAM", "prompt is required")
 
-    # Resolve auth token (JWT only)
-    auth_token, token_source = _resolve_auth_token(arguments)
-    if not auth_token:
-        return _error_result(
-            "INVALID_TOKEN",
-            "No auth token available. Authenticate via OAuth.",
-        )
+    # Resolve auth + project via SDK client (same pattern as deploy_flow, etc.)
+    async with _sdk_client(arguments) as client:
+        auth_token, _ = _resolve_auth_token(arguments)
+        if not auth_token:
+            return _error_result(
+                "INVALID_TOKEN",
+                "No auth token available. Authenticate via OAuth.",
+            )
 
-    # Resolve project ID
-    req_headers = _resolve_request_headers()
-    project_id = (
-        arguments.get("project_id")
-        or req_headers.get("project_id")
-        or _request_project_id.get()
-        or _server_project_id
-        or ""
-    )
+        project_id = client._config.resolve_project_id()
+        if not project_id:
+            return _error_result(
+                "MISSING_PARAM",
+                "project_id could not be resolved. Pass it as a tool argument or via x-project-id header.",
+            )
 
     # Generate session ID for this flow builder conversation
     session_id = str(uuid.uuid4())
 
-    # Build popup URL — use FASTN_FLOW_BUILDER_URL env var,
-    # or fall back to --server-url + /flow-builder.html
-    from urllib.parse import quote
-    base_url = os.environ.get("FASTN_FLOW_BUILDER_URL", "")
-    if not base_url and _server_url:
-        base_url = _server_url.rstrip("/") + "/flow-builder.html"
-    if not base_url:
+    # Resolve server base URL
+    server_base = _server_url
+    if not server_base:
         return _error_result(
             "CONFIG_ERROR",
-            "Cannot determine flow builder URL. Pass --server-url or set FASTN_FLOW_BUILDER_URL.",
+            "Cannot determine server URL. Pass --server-url.",
         )
 
-    popup_url = (
-        f"{base_url}?token={quote(auth_token)}"
-        f"&project={quote(project_id)}"
-        f"&session={quote(session_id)}"
-        f"&prompt={quote(prompt)}"
-    )
+    # Store params server-side, get a short code
+    try:
+        code = await _store_flow_session({
+            "token": auth_token,
+            "project": project_id,
+            "session": session_id,
+            "prompt": prompt,
+        })
+    except RuntimeError:
+        return _error_result(
+            "CAPACITY_EXCEEDED",
+            "Too many active flow builder sessions. Try again later.",
+        )
+
+    popup_url = f"{server_base.rstrip('/')}/fb/{code}"
 
     return _success_result({
         "popup_url": popup_url,
@@ -1167,7 +1287,7 @@ async def _handle_list_connectors(arguments: dict) -> list[TextContent]:
                 c for c in connectors
                 if q in c["name"].lower() or q in c.get("display_name", "").lower()
             ]
-        base_url = f"https://app.ucl.dev/projects/{workspace_id}/ucl/{skill_id}"
+        base_url = f"https://app.fastn.ai/projects/{workspace_id}/fastn/{skill_id}"
         results = [
             {
                 "name": c["name"],
@@ -1305,7 +1425,7 @@ async def _handle_configure_connect_kit_auth(arguments: dict) -> list[TextConten
             "verified_user": userinfo,
             "user_id": user_id,
             "resolved_userinfo_url": userinfo_url,
-            "review_url": f"https://app.ucl.dev/projects/{workspace_id}/ucl/configure-auth",
+            "review_url": f"https://app.fastn.ai/projects/{workspace_id}/fastn/configure-auth",
             "next_step": (
                 'Call deploy_flow with flow_id="fastnCustomAuth" and stage="LIVE" '
                 "to activate in production. Then call configure_connect_kit with a "
@@ -1519,8 +1639,8 @@ def create_starlette_app(
 
     Clients choose mode via URL path:
       /shttp          → all tools
-      /shttp/ucl      → UCL tools only
-      /shttp/ucl/{id} → UCL tools with pre-set project
+      /shttp/tools      → Fastn tools only
+      /shttp/tools/{id} → Fastn tools with pre-set project
       (same pattern for /sse)
     """
     import contextlib
@@ -1680,19 +1800,19 @@ def create_starlette_app(
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
     all_tools = TOOLS
-    ucl_tools = [t for t in TOOLS if t.name in UCL_TOOL_NAMES]
-    ucl_tools_no_proj = [t for t in TOOLS if t.name in (UCL_TOOL_NAMES - {"list_projects"})]
-    ucl_tools_no_proj_skill = [t for t in TOOLS if t.name in (UCL_TOOL_NAMES - {"list_projects", "list_skills"})]
+    fastn_tools = [t for t in TOOLS if t.name in FASTN_TOOL_NAMES]
+    fastn_tools_no_proj = [t for t in TOOLS if t.name in (FASTN_TOOL_NAMES - {"list_projects"})]
+    fastn_tools_no_proj_skill = [t for t in TOOLS if t.name in (FASTN_TOOL_NAMES - {"list_projects", "list_skills"})]
 
     server_all = _create_mcp_server(all_tools)
-    server_ucl = _create_mcp_server(ucl_tools)
-    server_ucl_proj = _create_mcp_server(ucl_tools_no_proj)
-    server_ucl_proj_skill = _create_mcp_server(ucl_tools_no_proj_skill)
+    server_fastn = _create_mcp_server(fastn_tools)
+    server_fastn_proj = _create_mcp_server(fastn_tools_no_proj)
+    server_fastn_proj_skill = _create_mcp_server(fastn_tools_no_proj_skill)
 
     mgr_all = StreamableHTTPSessionManager(app=server_all, stateless=True)
-    mgr_ucl = StreamableHTTPSessionManager(app=server_ucl, stateless=True)
-    mgr_ucl_proj = StreamableHTTPSessionManager(app=server_ucl_proj, stateless=True)
-    mgr_ucl_proj_skill = StreamableHTTPSessionManager(app=server_ucl_proj_skill, stateless=True)
+    mgr_fastn = StreamableHTTPSessionManager(app=server_fastn, stateless=True)
+    mgr_fastn_proj = StreamableHTTPSessionManager(app=server_fastn_proj, stateless=True)
+    mgr_fastn_proj_skill = StreamableHTTPSessionManager(app=server_fastn_proj_skill, stateless=True)
 
     # Route (exact match) not Mount (prefix match) — Mount appends
     # /{path:path} so it won't match the exact prefix path.
@@ -1701,42 +1821,42 @@ def create_starlette_app(
         logger.info("→ shttp ALL handler (%d tools)", len(all_tools))
         await mgr_all.handle_request(scope, receive, send)
 
-    async def _shttp_ucl(scope, receive, send):
-        logger.info("→ shttp UCL handler (%d tools)", len(ucl_tools))
-        await mgr_ucl.handle_request(scope, receive, send)
+    async def _shttp_fastn(scope, receive, send):
+        logger.info("→ shttp Fastn handler (%d tools)", len(fastn_tools))
+        await mgr_fastn.handle_request(scope, receive, send)
 
-    async def _shttp_ucl_proj(scope, receive, send):
+    async def _shttp_fastn_proj(scope, receive, send):
         project_id = scope.get("path_params", {}).get("project_id", "")
-        logger.info("→ shttp UCL+project handler (project=%s, %d tools)", project_id, len(ucl_tools_no_proj))
+        logger.info("→ shttp Fastn+project handler (project=%s, %d tools)", project_id, len(fastn_tools_no_proj))
         token = _request_project_id.set(project_id)
         try:
-            await mgr_ucl_proj.handle_request(scope, receive, send)
+            await mgr_fastn_proj.handle_request(scope, receive, send)
         finally:
             _request_project_id.reset(token)
 
-    async def _shttp_ucl_proj_skill(scope, receive, send):
+    async def _shttp_fastn_proj_skill(scope, receive, send):
         path_params = scope.get("path_params", {})
         project_id = path_params.get("project_id", "")
         skill_id = path_params.get("skill_id", "")
-        logger.info("→ shttp UCL+project+skill handler (project=%s, skill=%s, %d tools)", project_id, skill_id, len(ucl_tools_no_proj_skill))
+        logger.info("→ shttp Fastn+project+skill handler (project=%s, skill=%s, %d tools)", project_id, skill_id, len(fastn_tools_no_proj_skill))
         proj_token = _request_project_id.set(project_id)
         skill_token = _request_skill_id.set(skill_id)
         try:
-            await mgr_ucl_proj_skill.handle_request(scope, receive, send)
+            await mgr_fastn_proj_skill.handle_request(scope, receive, send)
         finally:
             _request_skill_id.reset(skill_token)
             _request_project_id.reset(proj_token)
 
     if auth_enabled:
         shttp_app_all = RequireAuthMiddleware(_shttp_all, required_scopes=[])
-        shttp_app_ucl = RequireAuthMiddleware(_shttp_ucl, required_scopes=[])
-        shttp_app_ucl_proj = RequireAuthMiddleware(_shttp_ucl_proj, required_scopes=[])
-        shttp_app_ucl_proj_skill = RequireAuthMiddleware(_shttp_ucl_proj_skill, required_scopes=[])
+        shttp_app_fastn = RequireAuthMiddleware(_shttp_fastn, required_scopes=[])
+        shttp_app_fastn_proj = RequireAuthMiddleware(_shttp_fastn_proj, required_scopes=[])
+        shttp_app_fastn_proj_skill = RequireAuthMiddleware(_shttp_fastn_proj_skill, required_scopes=[])
     else:
         shttp_app_all = _AsgiApp(_shttp_all)
-        shttp_app_ucl = _AsgiApp(_shttp_ucl)
-        shttp_app_ucl_proj = _AsgiApp(_shttp_ucl_proj)
-        shttp_app_ucl_proj_skill = _AsgiApp(_shttp_ucl_proj_skill)
+        shttp_app_fastn = _AsgiApp(_shttp_fastn)
+        shttp_app_fastn_proj = _AsgiApp(_shttp_fastn_proj)
+        shttp_app_fastn_proj_skill = _AsgiApp(_shttp_fastn_proj_skill)
 
     # ── Build transport-specific app ─────────────────────────────────────
     # Resolve which transports to enable
@@ -1752,21 +1872,21 @@ def create_starlette_app(
         base = server_url.rstrip("/")
 
         all_tool_names = [t.name for t in TOOLS]
-        ucl_tool_names = sorted(UCL_TOOL_NAMES)
-        ucl_no_proj_names = sorted(UCL_TOOL_NAMES - {"list_projects"})
-        ucl_no_proj_skill_names = sorted(UCL_TOOL_NAMES - {"list_projects", "list_skills"})
+        fastn_tool_names = sorted(FASTN_TOOL_NAMES)
+        fastn_no_proj_names = sorted(FASTN_TOOL_NAMES - {"list_projects"})
+        fastn_no_proj_skill_names = sorted(FASTN_TOOL_NAMES - {"list_projects", "list_skills"})
 
         endpoints = []
         if enable_shttp:
             endpoints.append({"method": "POST", "path": "/shttp", "url": f"{base}/shttp", "mode": "agent", "tools": len(all_tool_names), "description": "Streamable HTTP — all tools"})
-            endpoints.append({"method": "POST", "path": "/shttp/ucl", "url": f"{base}/shttp/ucl", "mode": "ucl", "tools": len(ucl_tool_names), "description": "Streamable HTTP — UCL tools only"})
-            endpoints.append({"method": "POST", "path": "/shttp/ucl/{project_id}", "url": f"{base}/shttp/ucl/{{project_id}}", "mode": "ucl", "tools": len(ucl_no_proj_names), "description": "Streamable HTTP — UCL with pre-set project"})
-            endpoints.append({"method": "POST", "path": "/shttp/ucl/{project_id}/{skill_id}", "url": f"{base}/shttp/ucl/{{project_id}}/{{skill_id}}", "mode": "ucl", "tools": len(ucl_no_proj_skill_names), "description": "Streamable HTTP — UCL with pre-set project and skill"})
+            endpoints.append({"method": "POST", "path": "/shttp/tools", "url": f"{base}/shttp/tools", "mode": "tools", "tools": len(fastn_tool_names), "description": "Streamable HTTP — Fastn tools only"})
+            endpoints.append({"method": "POST", "path": "/shttp/tools/{project_id}", "url": f"{base}/shttp/tools/{{project_id}}", "mode": "tools", "tools": len(fastn_no_proj_names), "description": "Streamable HTTP — Fastn with pre-set project"})
+            endpoints.append({"method": "POST", "path": "/shttp/tools/{project_id}/{skill_id}", "url": f"{base}/shttp/tools/{{project_id}}/{{skill_id}}", "mode": "tools", "tools": len(fastn_no_proj_skill_names), "description": "Streamable HTTP — Fastn with pre-set project and skill"})
         if enable_sse:
             endpoints.append({"method": "GET", "path": "/sse", "url": f"{base}/sse", "mode": "agent", "tools": len(all_tool_names), "description": "SSE — all tools"})
-            endpoints.append({"method": "GET", "path": "/sse/ucl", "url": f"{base}/sse/ucl", "mode": "ucl", "tools": len(ucl_tool_names), "description": "SSE — UCL tools only"})
-            endpoints.append({"method": "GET", "path": "/sse/ucl/{project_id}", "url": f"{base}/sse/ucl/{{project_id}}", "mode": "ucl", "tools": len(ucl_no_proj_names), "description": "SSE — UCL with pre-set project"})
-            endpoints.append({"method": "GET", "path": "/sse/ucl/{project_id}/{skill_id}", "url": f"{base}/sse/ucl/{{project_id}}/{{skill_id}}", "mode": "ucl", "tools": len(ucl_no_proj_skill_names), "description": "SSE — UCL with pre-set project and skill"})
+            endpoints.append({"method": "GET", "path": "/sse/tools", "url": f"{base}/sse/tools", "mode": "tools", "tools": len(fastn_tool_names), "description": "SSE — Fastn tools only"})
+            endpoints.append({"method": "GET", "path": "/sse/tools/{project_id}", "url": f"{base}/sse/tools/{{project_id}}", "mode": "tools", "tools": len(fastn_no_proj_names), "description": "SSE — Fastn with pre-set project"})
+            endpoints.append({"method": "GET", "path": "/sse/tools/{project_id}/{skill_id}", "url": f"{base}/sse/tools/{{project_id}}/{{skill_id}}", "mode": "tools", "tools": len(fastn_no_proj_skill_names), "description": "SSE — Fastn with pre-set project and skill"})
             endpoints.append({"method": "POST", "path": "/messages/", "url": f"{base}/messages/", "description": "SSE messages"})
 
         if auth_enabled:
@@ -1778,8 +1898,8 @@ def create_starlette_app(
             endpoints.append({"method": "GET", "path": "/callback", "url": f"{base}/callback", "description": "Keycloak callback"})
 
         modes = {
-            "agent": {"description": "All tools (UCL + flows + config)", "tools": all_tool_names},
-            "ucl": {"description": "Discovery and execution tools only", "tools": ucl_tool_names},
+            "agent": {"description": "All tools (Fastn + flows + config)", "tools": all_tool_names},
+            "tools": {"description": "Discovery and execution tools only", "tools": fastn_tool_names},
         }
 
         return JSONResponse({
@@ -1806,7 +1926,29 @@ def create_starlette_app(
             status_code=404,
         )
 
+    # ── Flow builder short-link redirect ─────────────────────────────
+    # /fb/{code} is a one-time-use short URL that retrieves stored
+    # session params and redirects to /flow-builder.html with query args.
+    async def handle_flow_redirect(request: Request):
+        from urllib.parse import urlencode
+        code = request.path_params["code"]
+        params = await _pop_flow_session(code)
+        if params is None:
+            return JSONResponse(
+                {"error": "invalid_or_expired",
+                 "message": "This flow builder link has expired or already been used."},
+                status_code=410,
+            )
+        query = urlencode({
+            "token": params.get("token", ""),
+            "project": params.get("project", ""),
+            "session": params.get("session", ""),
+            "prompt": params.get("prompt", ""),
+        })
+        return RedirectResponse(url=f"/flow-builder.html?{query}", status_code=302)
+
     routes = list(auth_routes)
+    routes.append(Route("/fb/{code}", endpoint=handle_flow_redirect, methods=["GET"]))
     routes.append(Route("/flow-builder.html", endpoint=handle_flow_builder, methods=["GET"]))
     routes.append(Route("/", endpoint=handle_root, methods=["GET"]))
     transport_names = []
@@ -1898,9 +2040,9 @@ def create_starlette_app(
             return handle_sse
 
         sse_all = _make_sse_handler(server_all)
-        sse_ucl = _make_sse_handler(server_ucl)
-        sse_ucl_proj = _make_sse_handler(server_ucl_proj, parse_project_from_path=True)
-        sse_ucl_proj_skill = _make_sse_handler(server_ucl_proj_skill, parse_project_from_path=True)
+        sse_fastn = _make_sse_handler(server_fastn)
+        sse_fastn_proj = _make_sse_handler(server_fastn_proj, parse_project_from_path=True)
+        sse_fastn_proj_skill = _make_sse_handler(server_fastn_proj_skill, parse_project_from_path=True)
 
         async def handle_post_message(scope, receive, send):
             """Wrap SSE POST handler to detect dead sessions early."""
@@ -1936,21 +2078,21 @@ def create_starlette_app(
 
         if auth_enabled:
             sse_handler_all = RequireAuthMiddleware(sse_all, required_scopes=[])
-            sse_handler_ucl = RequireAuthMiddleware(sse_ucl, required_scopes=[])
-            sse_handler_ucl_proj = RequireAuthMiddleware(sse_ucl_proj, required_scopes=[])
-            sse_handler_ucl_proj_skill = RequireAuthMiddleware(sse_ucl_proj_skill, required_scopes=[])
+            sse_handler_fastn = RequireAuthMiddleware(sse_fastn, required_scopes=[])
+            sse_handler_fastn_proj = RequireAuthMiddleware(sse_fastn_proj, required_scopes=[])
+            sse_handler_fastn_proj_skill = RequireAuthMiddleware(sse_fastn_proj_skill, required_scopes=[])
             messages_handler = RequireAuthMiddleware(handle_post_message, required_scopes=[])
         else:
             sse_handler_all = _AsgiApp(sse_all)
-            sse_handler_ucl = _AsgiApp(sse_ucl)
-            sse_handler_ucl_proj = _AsgiApp(sse_ucl_proj)
-            sse_handler_ucl_proj_skill = _AsgiApp(sse_ucl_proj_skill)
+            sse_handler_fastn = _AsgiApp(sse_fastn)
+            sse_handler_fastn_proj = _AsgiApp(sse_fastn_proj)
+            sse_handler_fastn_proj_skill = _AsgiApp(sse_fastn_proj_skill)
             messages_handler = _AsgiApp(handle_post_message)
 
         routes.append(Route("/sse", endpoint=sse_handler_all))
-        routes.append(Route("/sse/ucl", endpoint=sse_handler_ucl))
-        routes.append(Route("/sse/ucl/{project_id}/{skill_id}", endpoint=sse_handler_ucl_proj_skill))
-        routes.append(Route("/sse/ucl/{project_id}", endpoint=sse_handler_ucl_proj))
+        routes.append(Route("/sse/tools", endpoint=sse_handler_fastn))
+        routes.append(Route("/sse/tools/{project_id}/{skill_id}", endpoint=sse_handler_fastn_proj_skill))
+        routes.append(Route("/sse/tools/{project_id}", endpoint=sse_handler_fastn_proj))
         routes.append(Mount("/messages/", app=messages_handler))
         transport_names.append("SSE")
 
@@ -1958,9 +2100,9 @@ def create_starlette_app(
     # Uses Route (exact match) not Mount (prefix match) because Mount
     # appends /{path:path} and won't match the exact prefix path.
     if enable_shttp:
-        routes.append(Route("/shttp/ucl/{project_id}/{skill_id}", endpoint=shttp_app_ucl_proj_skill))
-        routes.append(Route("/shttp/ucl/{project_id:path}", endpoint=shttp_app_ucl_proj))
-        routes.append(Route("/shttp/ucl", endpoint=shttp_app_ucl))
+        routes.append(Route("/shttp/tools/{project_id}/{skill_id}", endpoint=shttp_app_fastn_proj_skill))
+        routes.append(Route("/shttp/tools/{project_id:path}", endpoint=shttp_app_fastn_proj))
+        routes.append(Route("/shttp/tools", endpoint=shttp_app_fastn))
         routes.append(Route("/shttp", endpoint=shttp_app_all))
         transport_names.append("Streamable HTTP")
 
@@ -1969,10 +2111,11 @@ def create_starlette_app(
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette) -> AsyncIterator[None]:
         logger.info("Fastn MCP server started (%s, auth=%s)", transport_label, auth_enabled)
+        _init_firestore()
         async with mgr_all.run():
-            async with mgr_ucl.run():
-                async with mgr_ucl_proj.run():
-                    async with mgr_ucl_proj_skill.run():
+            async with mgr_fastn.run():
+                async with mgr_fastn_proj.run():
+                    async with mgr_fastn_proj_skill.run():
                         async with anyio.create_task_group() as tg:
                             if _oauth_provider is not None:
                                 async def _cleanup_loop() -> None:
@@ -1980,6 +2123,13 @@ def create_starlette_app(
                                         await anyio.sleep(300)
                                         _oauth_provider.cleanup_expired()
                                 tg.start_soon(_cleanup_loop)
+
+                            async def _flow_session_cleanup_loop() -> None:
+                                while True:
+                                    await anyio.sleep(300)
+                                    _cleanup_flow_sessions()
+                            tg.start_soon(_flow_session_cleanup_loop)
+
                             yield
                             tg.cancel_scope.cancel()
         logger.info("Fastn MCP server stopped")
@@ -2035,14 +2185,14 @@ def _print_startup_info(
         lines.append("  Endpoints (mode filtering is runtime — all combinations available):")
         if enable_shttp:
             lines.append(f"    POST {base}/shttp                   all tools ({len(TOOLS)})")
-            lines.append(f"    POST {base}/shttp/ucl               UCL tools ({len(UCL_TOOL_NAMES)})")
-            lines.append(f"    POST {base}/shttp/ucl/{{project_id}}  UCL + project ({len(UCL_TOOL_NAMES) - 1})")
-            lines.append(f"    POST {base}/shttp/ucl/{{project_id}}/{{skill_id}}  UCL + project + skill ({len(UCL_TOOL_NAMES) - 2})")
+            lines.append(f"    POST {base}/shttp/tools               Fastn tools ({len(FASTN_TOOL_NAMES)})")
+            lines.append(f"    POST {base}/shttp/tools/{{project_id}}  Fastn + project ({len(FASTN_TOOL_NAMES) - 1})")
+            lines.append(f"    POST {base}/shttp/tools/{{project_id}}/{{skill_id}}  Fastn + project + skill ({len(FASTN_TOOL_NAMES) - 2})")
         if enable_sse:
             lines.append(f"    GET  {base}/sse                     all tools ({len(TOOLS)})")
-            lines.append(f"    GET  {base}/sse/ucl                 UCL tools ({len(UCL_TOOL_NAMES)})")
-            lines.append(f"    GET  {base}/sse/ucl/{{project_id}}    UCL + project ({len(UCL_TOOL_NAMES) - 1})")
-            lines.append(f"    GET  {base}/sse/ucl/{{project_id}}/{{skill_id}}    UCL + project + skill ({len(UCL_TOOL_NAMES) - 2})")
+            lines.append(f"    GET  {base}/sse/tools                 Fastn tools ({len(FASTN_TOOL_NAMES)})")
+            lines.append(f"    GET  {base}/sse/tools/{{project_id}}    Fastn + project ({len(FASTN_TOOL_NAMES) - 1})")
+            lines.append(f"    GET  {base}/sse/tools/{{project_id}}/{{skill_id}}    Fastn + project + skill ({len(FASTN_TOOL_NAMES) - 2})")
             lines.append(f"    POST {base}/messages/               SSE messages")
     else:
         lines.append(f"  Mode      : {_server_mode}")
@@ -2054,9 +2204,14 @@ def _print_startup_info(
     # Tools
     lines.append("")
     lines.append(f"  Tools ({len(TOOLS)}):")
+    _TOOL_TAGS = {
+        "find_tools": "Tools", "execute_tool": "Tools", "list_connectors": "Tools",
+        "configure_connect_kit": "Kit", "configure_connect_kit_auth": "Kit",
+        "list_projects": "Admin", "list_skills": "Admin", "deploy_flow": "Admin",
+    }
     for tool in TOOLS:
-        tag = "[UCL]" if tool.name in UCL_TOOL_NAMES else "[Agent]"
-        lines.append(f"    {tag:8s} {tool.name}")
+        tag = f"[{_TOOL_TAGS.get(tool.name, 'Agents')}]"
+        lines.append(f"    {tag:10s} {tool.name}")
 
     lines.append("")
     lines.append("=" * 60)
@@ -2077,7 +2232,7 @@ async def main(
 ):
     """Run the Fastn MCP server.
 
-    HTTP transports use URL path for mode filtering (/shttp/ucl, /sse/ucl).
+    HTTP transports use URL path for mode filtering (/shttp/tools, /sse/tools).
     The --mode, --project, and --skill flags apply to stdio transport only.
     """
     if transport == "stdio":

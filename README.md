@@ -22,7 +22,7 @@ Built on the [Fastn SDK](https://github.com/fastnai/fastn-sdk), this server expo
 
 ## Quick Start
 
-### 1. Sign up at [app.ucl.dev](https://app.ucl.dev)
+### 1. Sign up at [app.fastn.ai](https://app.fastn.ai)
 
 Create an account and connect your first connectors (Gmail, Slack, GitHub, etc.).
 
@@ -52,23 +52,23 @@ Use the hosted server (`mcp.live.fastn.ai`) or your self-hosted instance. Each p
 | Endpoint | Tools |
 |----------|-------|
 | `/shttp` | All 11 tools: `find_tools`, `execute_tool`, `list_connectors`, `list_skills`, `list_projects`, `list_flows`, `run_flow`, `delete_flow`, `create_flow`, `update_flow`, `configure_custom_auth` |
-| `/shttp/ucl` | 5 tools: `find_tools`, `execute_tool`, `list_connectors`, `list_skills`, `list_projects` |
-| `/shttp/ucl/{project_id}` | 4 tools: `find_tools`, `execute_tool`, `list_connectors`, `list_skills` |
-| `/shttp/ucl/{project_id}/{skill_id}` | 3 tools: `find_tools`, `execute_tool`, `list_connectors` |
-| `/sse`, `/sse/ucl`, etc. | Same pattern for SSE transport |
+| `/shttp/tools` | 5 tools: `find_tools`, `execute_tool`, `list_connectors`, `list_skills`, `list_projects` |
+| `/shttp/tools/{project_id}` | 4 tools: `find_tools`, `execute_tool`, `list_connectors`, `list_skills` |
+| `/shttp/tools/{project_id}/{skill_id}` | 3 tools: `find_tools`, `execute_tool`, `list_connectors` |
+| `/sse`, `/sse/tools`, etc. | Same pattern for SSE transport |
 
 **Examples with the hosted server:**
 
 ```
 https://mcp.live.fastn.ai/shttp                              # All tools
-https://mcp.live.fastn.ai/shttp/ucl                           # UCL tools only
-https://mcp.live.fastn.ai/shttp/ucl/{project_id}              # Pre-set project
-https://mcp.live.fastn.ai/shttp/ucl/{project_id}/{skill_id}   # Pre-set project + skill
+https://mcp.live.fastn.ai/shttp/tools                           # Fastn tools only
+https://mcp.live.fastn.ai/shttp/tools/{project_id}              # Pre-set project
+https://mcp.live.fastn.ai/shttp/tools/{project_id}/{skill_id}   # Pre-set project + skill
 ```
 
 ### Authentication
 
-The MCP server supports three authentication methods. Get your credentials from [app.ucl.dev](https://app.ucl.dev).
+The MCP server supports three authentication methods. Get your credentials from [app.fastn.ai](https://app.fastn.ai).
 
 #### MCP OAuth 2.1 (Recommended)
 
@@ -77,7 +77,7 @@ Standard MCP OAuth flow with PKCE. The server bridges to Fastn's identity provid
 ```json
 {
   "mcpServers": {
-    "fastn": {
+    "tools": {
       "url": "https://mcp.live.fastn.ai/shttp"
     }
   }
@@ -91,7 +91,7 @@ Pass a Fastn auth token or API key via the `Authorization` header in your MCP cl
 ```json
 {
   "mcpServers": {
-    "fastn": {
+    "tools": {
       "url": "https://mcp.live.fastn.ai/shttp",
       "headers": {
         "Authorization": "Bearer <your-token-or-api-key>"
@@ -106,7 +106,7 @@ You can also pass `x-project-id` to scope requests to a specific project:
 ```json
 {
   "mcpServers": {
-    "fastn": {
+    "tools": {
       "url": "https://mcp.live.fastn.ai/shttp",
       "headers": {
         "Authorization": "Bearer <your-token-or-api-key>",
@@ -122,7 +122,7 @@ For local stdio transport, pass credentials as environment variables:
 ```json
 {
   "mcpServers": {
-    "fastn": {
+    "tools": {
       "command": "fastn-mcp",
       "args": ["--stdio"],
       "env": {
@@ -138,7 +138,7 @@ For local stdio transport, pass credentials as environment variables:
 
 The server exposes these tools to AI agents:
 
-### UCL Tools
+### Fastn Tools
 
 | Tool | Description |
 |------|-------------|
@@ -204,13 +204,13 @@ The JSON examples above work with any MCP client. Here are the config file locat
 | **Cursor** | `.cursor/mcp.json` in your project |
 | **Claude Code** | `.mcp.json` in your project |
 
-For Cursor, use the `/shttp/ucl` endpoint to expose only UCL tools (recommended for coding assistants):
+For Cursor, use the `/shttp/tools` endpoint to expose only Fastn tools (recommended for coding assistants):
 
 ```json
 {
   "mcpServers": {
-    "fastn": {
-      "url": "https://mcp.live.fastn.ai/shttp/ucl"
+    "tools": {
+      "url": "https://mcp.live.fastn.ai/shttp/tools"
     }
   }
 }
@@ -224,9 +224,9 @@ For Cursor, use the `/shttp/ucl` endpoint to expose only UCL tools (recommended 
 
 ```bash
 fastn-mcp --stdio
-fastn-mcp --stdio --mode ucl                          # UCL tools only
-fastn-mcp --stdio --mode ucl --project ID              # UCL tools + pre-set project
-fastn-mcp --stdio --mode ucl --project ID --skill ID   # UCL tools + pre-set project and skill
+fastn-mcp --stdio --mode tools                          # Fastn tools only
+fastn-mcp --stdio --mode tools --project ID              # Fastn tools + pre-set project
+fastn-mcp --stdio --mode tools --project ID --skill ID   # Fastn tools + pre-set project and skill
 ```
 
 **SSE + Streamable HTTP (remote)** — For web-based AI platforms:
@@ -365,7 +365,7 @@ Server:
   --server-url URL Public URL for OAuth metadata
 
 Mode:
-  --mode {agent,ucl} Tool mode for stdio: "agent" (all tools) or "ucl" (UCL tools only)
+  --mode {agent,tools} Tool mode for stdio: "agent" (all tools) or "tools" (Fastn tools only)
   --project ID     Pre-set project ID for stdio
   --skill ID       Pre-set skill ID for stdio (requires --project)
 

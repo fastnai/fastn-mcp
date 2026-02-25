@@ -96,7 +96,7 @@ ALLOWED_REDIRECT_DOMAINS: set[str] = {
     "windsurf.ai",
     # Fastn own domains
     "app.fastn.ai",
-    "mcp.ucl.dev",
+    "mcp.live.fastn.ai",
     # Development tunnels
     "ngrok-free.dev",
 }
