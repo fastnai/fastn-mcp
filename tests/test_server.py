@@ -28,15 +28,19 @@ from fastn.exceptions import (
 import fastn_mcp.server as _server_mod
 
 from fastn_mcp.server import (
-    _handle_create_flow as create_flow,
+    _handle_generate_flow as generate_flow,
     _handle_delete_flow as delete_flow,
     _handle_update_flow as update_flow,
+    _handle_get_flow_schema as get_flow_schema,
     _handle_run_flow as run_flow,
     _handle_execute_tool as execute_tool,
     _handle_list_flows as list_flows,
     _handle_find_tools as find_tools,
     _handle_list_connectors as list_connectors,
-    _handle_configure_custom_auth as configure_custom_auth,
+    _handle_configure_connect_kit_auth as configure_connect_kit_auth,
+    _handle_configure_connect_kit as configure_connect_kit,
+    _handle_deploy_flow as deploy_flow,
+    _resolve_userinfo_url,
     _handle_list_skills as list_skills,
     _handle_list_projects as list_projects,
     handle_call_tool,
@@ -64,7 +68,7 @@ def _mock_client(**namespace_mocks):
 
     Usage:
         client = _mock_client(
-            flows_create=AsyncMock(return_value={"flow_id": "flow_abc"}),
+            flows_generate=AsyncMock(return_value={"flow_id": "flow_abc"}),
             flows_delete=AsyncMock(side_effect=FlowNotFoundError("xyz")),
         )
     """
@@ -73,12 +77,13 @@ def _mock_client(**namespace_mocks):
 
     # Flows namespace
     client.flows = MagicMock()
-    client.flows.create = namespace_mocks.get("flows_create", AsyncMock(return_value={}))
+    client.flows.generate = namespace_mocks.get("flows_generate", AsyncMock(return_value={}))
     client.flows.delete = namespace_mocks.get("flows_delete", AsyncMock(return_value={}))
     client.flows.run = namespace_mocks.get("flows_run", AsyncMock(return_value={}))
     client.flows.get_run = namespace_mocks.get("flows_get_run", AsyncMock(return_value={}))
     client.flows.list = namespace_mocks.get("flows_list", AsyncMock(return_value=[]))
     client.flows.update = namespace_mocks.get("flows_update", AsyncMock(return_value={}))
+    client.flows.schema = namespace_mocks.get("flows_schema", AsyncMock(return_value={}))
 
     # Connections namespace
     client.connections = MagicMock()
@@ -97,8 +102,14 @@ def _mock_client(**namespace_mocks):
     client.projects = MagicMock()
     client.projects.list = namespace_mocks.get("projects_list", AsyncMock(return_value=[]))
 
-    # configure_custom_auth
-    client.configure_custom_auth = namespace_mocks.get("configure_custom_auth", AsyncMock(return_value={}))
+    # Auth namespace
+    client.auth = MagicMock()
+    client.auth.configure_custom = namespace_mocks.get("auth_configure_custom", AsyncMock(return_value={}))
+
+    # Kit namespace
+    client.kit = MagicMock()
+    client.kit.get = namespace_mocks.get("kit_get", AsyncMock(return_value={}))
+    client.kit.update = namespace_mocks.get("kit_update", AsyncMock(return_value={}))
 
     # execute (used by execute_tool and run_flow)
     client.execute = namespace_mocks.get("execute", AsyncMock(return_value={}))
@@ -114,18 +125,66 @@ def _mock_client(**namespace_mocks):
 
 
 # ---------------------------------------------------------------------------
-# create_flow tests
+# generate_flow tests
 # ---------------------------------------------------------------------------
 
-class TestCreateFlow:
+class TestGenerateFlow:
     @pytest.mark.asyncio
-    async def test_returns_under_development(self):
-        """create_flow returns UNDER_DEVELOPMENT status."""
-        result = await create_flow({"prompt": "Sync HubSpot contacts"})
+    async def test_success(self):
+        """generate_flow calls client.flows.generate() and returns result."""
+        client = _mock_client(
+            flows_generate=AsyncMock(return_value={"output": "I'll create a flow that syncs HubSpot contacts.", "session_id": "sess-123"}),
+        )
+        with patch("fastn_mcp.server._get_client", return_value=client):
+            result = await generate_flow({"prompt": "Sync HubSpot contacts"})
 
         data = _parse_result(result)
-        assert data["error"] == "UNDER_DEVELOPMENT"
-        assert "execute_tool" in data["message"]
+        assert data["output"] == "I'll create a flow that syncs HubSpot contacts."
+        assert data["session_id"] == "sess-123"
+        client.flows.generate.assert_called_once_with("Sync HubSpot contacts", session_id=None)
+
+    @pytest.mark.asyncio
+    async def test_with_session_id(self):
+        """generate_flow passes session_id for multi-turn conversation."""
+        client = _mock_client(
+            flows_generate=AsyncMock(return_value={"output": "Got it, using Slack #general."}),
+        )
+        with patch("fastn_mcp.server._get_client", return_value=client):
+            result = await generate_flow({"prompt": "Use #general channel", "session_id": "sess-123"})
+
+        data = _parse_result(result)
+        assert data["output"] == "Got it, using Slack #general."
+        client.flows.generate.assert_called_once_with("Use #general channel", session_id="sess-123")
+
+    @pytest.mark.asyncio
+    async def test_missing_prompt(self):
+        """generate_flow returns MISSING_PARAM when prompt not provided."""
+        result = await generate_flow({})
+
+        data = _parse_result(result)
+        assert data["error"] == "MISSING_PARAM"
+
+    @pytest.mark.asyncio
+    async def test_auth_error_propagates(self):
+        """generate_flow propagates AuthError to centralized handler."""
+        client = _mock_client(
+            flows_generate=AsyncMock(side_effect=AuthError("Token expired")),
+        )
+        with patch("fastn_mcp.server._get_client", return_value=client), \
+             pytest.raises(AuthError):
+            await generate_flow({"prompt": "test"})
+
+    @pytest.mark.asyncio
+    async def test_closes_client(self):
+        """generate_flow always closes the client even on error."""
+        client = _mock_client(
+            flows_generate=AsyncMock(side_effect=FastnError("boom")),
+        )
+        with patch("fastn_mcp.server._get_client", return_value=client), \
+             pytest.raises(FastnError):
+            await generate_flow({"prompt": "test"})
+
+        client.close.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -202,32 +261,32 @@ class TestUpdateFlow:
 class TestRunFlow:
     @pytest.mark.asyncio
     async def test_success(self):
-        """run_flow executes via client.execute() and returns result."""
+        """run_flow executes via client.flows.run() and returns result."""
         client = _mock_client(
-            execute=AsyncMock(return_value={"status": "ok", "data": [1, 2, 3]}),
+            flows_run=AsyncMock(return_value={"status": "ok", "data": [1, 2, 3]}),
         )
         with patch("fastn_mcp.server._get_client", return_value=client):
             result = await run_flow({"flow_id": "flow_abc"})
 
         data = _parse_result(result)
         assert data["status"] == "ok"
-        client.execute.assert_called_once_with(
-            tool="flow_abc",
-            params={},
+        client.flows.run.assert_called_once_with(
+            "flow_abc",
+            input_data={},
         )
 
     @pytest.mark.asyncio
     async def test_with_parameters(self):
-        """run_flow passes parameters to execute()."""
+        """run_flow passes parameters to flows.run()."""
         client = _mock_client(
-            execute=AsyncMock(return_value={"status": "ok"}),
+            flows_run=AsyncMock(return_value={"status": "ok"}),
         )
         with patch("fastn_mcp.server._get_client", return_value=client):
             await run_flow({"flow_id": "flow_abc", "parameters": {"key": "value"}})
 
-        client.execute.assert_called_once_with(
-            tool="flow_abc",
-            params={"key": "value"},
+        client.flows.run.assert_called_once_with(
+            "flow_abc",
+            input_data={"key": "value"},
         )
 
     @pytest.mark.asyncio
@@ -242,7 +301,7 @@ class TestRunFlow:
     async def test_auth_error_propagates(self):
         """run_flow propagates AuthError to centralized handler."""
         client = _mock_client(
-            execute=AsyncMock(side_effect=AuthError("Token expired")),
+            flows_run=AsyncMock(side_effect=AuthError("Token expired")),
         )
         with patch("fastn_mcp.server._get_client", return_value=client), \
              pytest.raises(AuthError):
@@ -252,11 +311,72 @@ class TestRunFlow:
     async def test_closes_client(self):
         """run_flow always closes the client even on error."""
         client = _mock_client(
-            execute=AsyncMock(side_effect=FastnError("boom")),
+            flows_run=AsyncMock(side_effect=FastnError("boom")),
         )
         with patch("fastn_mcp.server._get_client", return_value=client), \
              pytest.raises(FastnError):
             await run_flow({"flow_id": "flow_abc"})
+
+        client.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# get_flow_schema tests
+# ---------------------------------------------------------------------------
+
+class TestGetFlowSchema:
+    @pytest.mark.asyncio
+    async def test_success(self):
+        """get_flow_schema returns fields and schema from SDK."""
+        schema_result = {
+            "fields": ["email", "subject"],
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "email": {"type": "string"},
+                    "subject": {"type": "string"},
+                },
+                "required": ["email", "subject"],
+            },
+        }
+        client = _mock_client(
+            flows_schema=AsyncMock(return_value=schema_result),
+        )
+        with patch("fastn_mcp.server._get_client", return_value=client):
+            result = await get_flow_schema({"flow_id": "flow_abc"})
+
+        data = _parse_result(result)
+        assert data["fields"] == ["email", "subject"]
+        assert data["schema"]["type"] == "object"
+        client.flows.schema.assert_called_once_with("flow_abc")
+
+    @pytest.mark.asyncio
+    async def test_missing_flow_id(self):
+        """get_flow_schema returns MISSING_PARAM when flow_id not provided."""
+        result = await get_flow_schema({})
+
+        data = _parse_result(result)
+        assert data["error"] == "MISSING_PARAM"
+
+    @pytest.mark.asyncio
+    async def test_flow_not_found(self):
+        """get_flow_schema propagates FlowNotFoundError."""
+        client = _mock_client(
+            flows_schema=AsyncMock(side_effect=FlowNotFoundError("no_such_flow")),
+        )
+        with patch("fastn_mcp.server._get_client", return_value=client), \
+             pytest.raises(FlowNotFoundError):
+            await get_flow_schema({"flow_id": "no_such_flow"})
+
+    @pytest.mark.asyncio
+    async def test_closes_client(self):
+        """get_flow_schema always closes the client."""
+        client = _mock_client(
+            flows_schema=AsyncMock(side_effect=FastnError("boom")),
+        )
+        with patch("fastn_mcp.server._get_client", return_value=client), \
+             pytest.raises(FastnError):
+            await get_flow_schema({"flow_id": "flow_abc"})
 
         client.close.assert_called_once()
 
@@ -605,61 +725,527 @@ class TestListSkills:
 
 
 # ---------------------------------------------------------------------------
-# configure_custom_auth tests
+# configure_connect_kit_auth tests
 # ---------------------------------------------------------------------------
 
-class TestConfigureCustomAuth:
+class TestResolveUserinfoUrl:
+    """Tests for _resolve_userinfo_url helper."""
+
     @pytest.mark.asyncio
-    async def test_success(self):
-        """configure_custom_auth sends issuer config and returns confirmation."""
-        client = _mock_client(
-            configure_custom_auth=AsyncMock(return_value={"configured": True}),
+    async def test_direct_userinfo_url(self):
+        """Direct userinfo URL passes through unchanged."""
+        http = AsyncMock()
+        result = await _resolve_userinfo_url("https://myapp.auth0.com/userinfo", http)
+        assert result == "https://myapp.auth0.com/userinfo"
+        http.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_direct_user_url(self):
+        """Direct /user URL passes through unchanged (Supabase style)."""
+        http = AsyncMock()
+        result = await _resolve_userinfo_url("https://xyz.supabase.co/auth/v1/user", http)
+        assert result == "https://xyz.supabase.co/auth/v1/user"
+
+    @pytest.mark.asyncio
+    async def test_keycloak_realm_url(self):
+        """Keycloak realm URL resolves to protocol/openid-connect/userinfo."""
+        http = AsyncMock()
+        result = await _resolve_userinfo_url(
+            "https://auth.example.com/realms/myapp", http
         )
-        with patch("fastn_mcp.server._get_client", return_value=client):
-            result = await configure_custom_auth({
-                "issuer_url": "https://myapp.auth0.com/",
-                "jwks_uri": "https://myapp.auth0.com/.well-known/jwks.json",
-                "user_id_claim": "sub",
+        assert result == "https://auth.example.com/realms/myapp/protocol/openid-connect/userinfo"
+
+    @pytest.mark.asyncio
+    async def test_keycloak_with_auth_prefix(self):
+        """Keycloak URL with /auth/realms/ prefix resolves correctly."""
+        http = AsyncMock()
+        result = await _resolve_userinfo_url(
+            "https://auth.example.com/auth/realms/myapp", http
+        )
+        assert result == "https://auth.example.com/auth/realms/myapp/protocol/openid-connect/userinfo"
+
+    @pytest.mark.asyncio
+    async def test_keycloak_with_trailing_slash(self):
+        """Keycloak URL with trailing slash resolves correctly."""
+        http = AsyncMock()
+        result = await _resolve_userinfo_url(
+            "https://auth.example.com/realms/myapp/", http
+        )
+        assert result == "https://auth.example.com/realms/myapp/protocol/openid-connect/userinfo"
+
+    @pytest.mark.asyncio
+    async def test_supabase_project_url(self):
+        """Supabase project URL resolves to /auth/v1/user."""
+        http = AsyncMock()
+        result = await _resolve_userinfo_url("https://xyz.supabase.co", http)
+        assert result == "https://xyz.supabase.co/auth/v1/user"
+
+    @pytest.mark.asyncio
+    async def test_supabase_in_domain(self):
+        """Supabase .in domain resolves correctly."""
+        http = AsyncMock()
+        result = await _resolve_userinfo_url("https://xyz.supabase.in", http)
+        assert result == "https://xyz.supabase.in/auth/v1/user"
+
+    @pytest.mark.asyncio
+    async def test_supabase_custom_function_passthrough(self):
+        """Supabase Edge Function auth-userinfo URL passes through unchanged."""
+        http = AsyncMock()
+        result = await _resolve_userinfo_url(
+            "https://aipeedrjshofppnpbexn.supabase.co/functions/v1/auth-userinfo", http
+        )
+        assert result == "https://aipeedrjshofppnpbexn.supabase.co/functions/v1/auth-userinfo"
+
+    @pytest.mark.asyncio
+    async def test_oidc_discovery(self):
+        """OIDC discovery fetches .well-known/openid-configuration."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "userinfo_endpoint": "https://accounts.google.com/o/oauth2/v2/userinfo"
+        }
+        http = AsyncMock()
+        http.get = AsyncMock(return_value=mock_resp)
+
+        result = await _resolve_userinfo_url("https://accounts.google.com", http)
+        assert result == "https://accounts.google.com/o/oauth2/v2/userinfo"
+        http.get.assert_called_once_with(
+            "https://accounts.google.com/.well-known/openid-configuration",
+            timeout=10,
+        )
+
+    @pytest.mark.asyncio
+    async def test_oidc_discovery_fails_returns_none(self):
+        """Returns None when OIDC discovery fails."""
+        http = AsyncMock()
+        http.get = AsyncMock(side_effect=Exception("timeout"))
+
+        result = await _resolve_userinfo_url("https://unknown.example.com", http)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_oidc_discovery_no_userinfo_endpoint(self):
+        """Returns None when discovery response has no userinfo_endpoint."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"issuer": "https://example.com"}
+        http = AsyncMock()
+        http.get = AsyncMock(return_value=mock_resp)
+
+        result = await _resolve_userinfo_url("https://example.com", http)
+        assert result is None
+
+
+class TestConfigureConnectKitAuth:
+    @pytest.mark.asyncio
+    async def test_success_with_direct_url(self):
+        """configure_connect_kit_auth resolves, verifies, and calls GraphQL directly."""
+        client = _mock_client()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"sub": "user123", "email": "test@example.com"}
+
+        mock_http = AsyncMock()
+        mock_http.get = AsyncMock(return_value=mock_resp)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+
+        mock_gql = AsyncMock(return_value={"updateResolverStep": {"id": "x", "type": "COMPOSITE"}})
+
+        with patch("fastn_mcp.server._get_client", return_value=client), \
+             patch("httpx.AsyncClient", return_value=mock_http), \
+             patch("fastn._http._gql_call_async", mock_gql):
+            result = await configure_connect_kit_auth({
+                "auth_url": "https://myapp.auth0.com/userinfo",
+                "user_token": "eyJhbGciOiJSUzI1NiJ9.test.sig",
             })
 
         data = _parse_result(result)
-        assert data["configured"] is True
-        client.configure_custom_auth.assert_called_once_with(
-            issuer_url="https://myapp.auth0.com/",
-            jwks_uri="https://myapp.auth0.com/.well-known/jwks.json",
-            user_id_claim="sub",
-        )
+        assert data["verified_user"]["sub"] == "user123"
+        assert data["user_id"] == "user123"
+        assert data["resolved_userinfo_url"] == "https://myapp.auth0.com/userinfo"
+        assert "review_url" in data
+        assert "/ucl/configure-auth" in data["review_url"]
+        assert "next_step" in data
+        mock_gql.assert_called_once()
+        # Verify the GraphQL call used the client and correct userinfo URL
+        call_args = mock_gql.call_args
+        assert call_args[0][0] is client  # first positional arg is the client
 
     @pytest.mark.asyncio
-    async def test_auth_error_propagates(self):
-        """configure_custom_auth propagates AuthError to centralized handler."""
-        client = _mock_client(
-            configure_custom_auth=AsyncMock(side_effect=AuthError("Token expired")),
-        )
+    async def test_user_id_passed_as_tenant_id(self):
+        """configure_connect_kit_auth passes user_id as tenant_id to SDK client."""
+        client = _mock_client()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"sub": "user123"}
+
+        mock_http = AsyncMock()
+        mock_http.get = AsyncMock(return_value=mock_resp)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+
+        mock_gql = AsyncMock(return_value={"updateResolverStep": {"id": "x"}})
+
+        args = {
+            "auth_url": "https://myapp.auth0.com/userinfo",
+            "user_token": "eyJ.test.sig",
+            "user_id": "custom_uid_456",
+        }
         with patch("fastn_mcp.server._get_client", return_value=client), \
-             pytest.raises(AuthError):
-            await configure_custom_auth({
-                "issuer_url": "https://example.com/",
-                "jwks_uri": "https://example.com/.well-known/jwks.json",
-            })
+             patch("httpx.AsyncClient", return_value=mock_http), \
+             patch("fastn._http._gql_call_async", mock_gql):
+            result = await configure_connect_kit_auth(args)
+
+        data = _parse_result(result)
+        assert data["user_id"] == "custom_uid_456"
+        assert args["tenant_id"] == "custom_uid_456"
 
     @pytest.mark.asyncio
-    async def test_default_user_id_claim(self):
-        """configure_custom_auth defaults user_id_claim to 'sub'."""
-        client = _mock_client(
-            configure_custom_auth=AsyncMock(return_value={"configured": True}),
-        )
-        with patch("fastn_mcp.server._get_client", return_value=client):
-            await configure_custom_auth({
-                "issuer_url": "https://example.com/",
-                "jwks_uri": "https://example.com/.well-known/jwks.json",
+    async def test_missing_auth_url(self):
+        """configure_connect_kit_auth returns MISSING_PARAM when auth_url not provided."""
+        result = await configure_connect_kit_auth({"user_token": "tok"})
+
+        data = _parse_result(result)
+        assert data["error"] == "MISSING_PARAM"
+
+    @pytest.mark.asyncio
+    async def test_missing_user_token(self):
+        """configure_connect_kit_auth returns MISSING_PARAM when user_token not provided."""
+        result = await configure_connect_kit_auth({"auth_url": "https://example.com/userinfo"})
+
+        data = _parse_result(result)
+        assert data["error"] == "MISSING_PARAM"
+
+    @pytest.mark.asyncio
+    async def test_resolution_failed(self):
+        """configure_connect_kit_auth returns RESOLUTION_FAILED for unresolvable URL."""
+        mock_discovery_resp = MagicMock()
+        mock_discovery_resp.status_code = 404
+
+        mock_http = AsyncMock()
+        mock_http.get = AsyncMock(return_value=mock_discovery_resp)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("httpx.AsyncClient", return_value=mock_http):
+            result = await configure_connect_kit_auth({
+                "auth_url": "https://unknown.example.com",
+                "user_token": "some_token",
             })
 
-        client.configure_custom_auth.assert_called_once_with(
-            issuer_url="https://example.com/",
-            jwks_uri="https://example.com/.well-known/jwks.json",
-            user_id_claim="sub",
+        data = _parse_result(result)
+        assert data["error"] == "RESOLUTION_FAILED"
+
+    @pytest.mark.asyncio
+    async def test_verification_failed_non_200(self):
+        """configure_connect_kit_auth returns VERIFICATION_FAILED on non-200 response."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        mock_resp.text = "Unauthorized"
+
+        mock_http = AsyncMock()
+        mock_http.get = AsyncMock(return_value=mock_resp)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("httpx.AsyncClient", return_value=mock_http):
+            result = await configure_connect_kit_auth({
+                "auth_url": "https://example.com/userinfo",
+                "user_token": "bad_token",
+            })
+
+        data = _parse_result(result)
+        assert data["error"] == "VERIFICATION_FAILED"
+        assert "401" in data["message"]
+
+    @pytest.mark.asyncio
+    async def test_verification_failed_connection_error(self):
+        """configure_connect_kit_auth returns VERIFICATION_FAILED on connection error."""
+        import httpx
+
+        mock_http = AsyncMock()
+        mock_http.get = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("httpx.AsyncClient", return_value=mock_http):
+            result = await configure_connect_kit_auth({
+                "auth_url": "https://example.com/userinfo",
+                "user_token": "some_token",
+            })
+
+        data = _parse_result(result)
+        assert data["error"] == "VERIFICATION_FAILED"
+
+    @pytest.mark.asyncio
+    async def test_keycloak_url_resolves_and_configures(self):
+        """configure_connect_kit_auth resolves Keycloak URL and calls GraphQL."""
+        client = _mock_client()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"sub": "kc_user"}
+
+        mock_http = AsyncMock()
+        mock_http.get = AsyncMock(return_value=mock_resp)
+        mock_http.__aenter__ = AsyncMock(return_value=mock_http)
+        mock_http.__aexit__ = AsyncMock(return_value=False)
+
+        mock_gql = AsyncMock(return_value={"updateResolverStep": {"id": "x"}})
+
+        with patch("fastn_mcp.server._get_client", return_value=client), \
+             patch("httpx.AsyncClient", return_value=mock_http), \
+             patch("fastn._http._gql_call_async", mock_gql):
+            result = await configure_connect_kit_auth({
+                "auth_url": "https://auth.example.com/realms/myapp",
+                "user_token": "eyJ.kc.sig",
+            })
+
+        data = _parse_result(result)
+        assert data["resolved_userinfo_url"] == (
+            "https://auth.example.com/realms/myapp/protocol/openid-connect/userinfo"
         )
+        mock_gql.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# configure_connect_kit tests
+# ---------------------------------------------------------------------------
+
+class TestConfigureConnectKit:
+    def _make_gql_mock(self, existing_kit, save_result=None):
+        """Create a mock _gql_call_async that returns existing_kit for GET, save_result for SAVE.
+
+        Returns (mock, capture) where capture["save_variables"] holds the save call's variables.
+        """
+        if save_result is None:
+            save_result = {}
+        capture = {"save_variables": None}
+
+        async def _side_effect(client, query, variables):
+            if "widgetMetadata" in query:
+                return {"widgetMetadata": existing_kit}
+            if "saveWidgetMetadata" in query:
+                capture["save_variables"] = variables
+                return {"saveWidgetMetadata": save_result}
+            return {}
+
+        return AsyncMock(side_effect=_side_effect), capture
+
+    @pytest.mark.asyncio
+    async def test_success_merges_with_existing(self):
+        """configure_connect_kit fetches existing config, merges styles, preserves other fields."""
+        existing_kit = {
+            "styles": {
+                "fontFamily": "Arial",
+                "backgroundColor": {"light": "#fff", "dark": "#000"},
+            },
+            "showFilterBar": True,
+            "isRBACEnabled": False,
+        }
+        save_result = {"authenticationApi": "", "isCustomAuthenticationEnabled": False}
+        client = _mock_client()
+        mock_gql, capture = self._make_gql_mock(existing_kit, save_result)
+
+        with patch("fastn_mcp.server._get_client", return_value=client), \
+             patch("fastn._http._gql_call_async", mock_gql):
+            result = await configure_connect_kit({
+                "styles": {"fontFamily": "Inter", "avatar": {"width": "40px"}},
+            })
+
+        data = _parse_result(result)
+        assert "authenticationApi" in data
+        assert mock_gql.call_count == 2
+        save_input = capture["save_variables"]["input"]
+        assert isinstance(save_input["styles"], str)
+        assert json.loads(save_input["styles"]) == {
+            "fontFamily": "Inter",
+            "backgroundColor": {"light": "#fff", "dark": "#000"},
+            "avatar": {"width": "40px"},
+        }
+        assert save_input["showFilterBar"] is True
+        assert save_input["isRBACEnabled"] is False
+
+    @pytest.mark.asyncio
+    async def test_success_no_existing_styles(self):
+        """configure_connect_kit works when no existing styles are present."""
+        client = _mock_client()
+        mock_gql, capture = self._make_gql_mock({}, {"ok": True})
+
+        with patch("fastn_mcp.server._get_client", return_value=client), \
+             patch("fastn._http._gql_call_async", mock_gql):
+            result = await configure_connect_kit({
+                "styles": {"fontFamily": "Inter"},
+            })
+
+        data = _parse_result(result)
+        assert data["ok"] is True
+        save_input = capture["save_variables"]["input"]
+        assert isinstance(save_input["styles"], str)
+        assert json.loads(save_input["styles"]) == {"fontFamily": "Inter"}
+
+    @pytest.mark.asyncio
+    async def test_deep_merge_nested(self):
+        """configure_connect_kit deep-merges nested style objects."""
+        existing_kit = {
+            "styles": {
+                "backgroundColor": {"light": "#fff", "dark": "#111"},
+                "color": {"light": {"text": "#000", "success": "green", "error": "red"}},
+            },
+        }
+        client = _mock_client()
+        mock_gql, capture = self._make_gql_mock(existing_kit)
+
+        with patch("fastn_mcp.server._get_client", return_value=client), \
+             patch("fastn._http._gql_call_async", mock_gql):
+            await configure_connect_kit({
+                "styles": {
+                    "backgroundColor": {"dark": "#222"},
+                    "color": {"light": {"text": "#333"}},
+                },
+            })
+
+        expected_styles = {
+            "backgroundColor": {"light": "#fff", "dark": "#222"},
+            "color": {"light": {"text": "#333", "success": "green", "error": "red"}},
+        }
+        save_input = capture["save_variables"]["input"]
+        assert isinstance(save_input["styles"], str)
+        assert json.loads(save_input["styles"]) == expected_styles
+
+    @pytest.mark.asyncio
+    async def test_existing_styles_as_json_string(self):
+        """configure_connect_kit parses existing styles when returned as JSON string."""
+        existing_kit = {
+            "styles": '{"fontFamily": "Arial", "backgroundColor": {"light": "#fff"}}',
+        }
+        client = _mock_client()
+        mock_gql, capture = self._make_gql_mock(existing_kit)
+
+        with patch("fastn_mcp.server._get_client", return_value=client), \
+             patch("fastn._http._gql_call_async", mock_gql):
+            await configure_connect_kit({
+                "styles": {"fontFamily": "Inter"},
+            })
+
+        save_input = capture["save_variables"]["input"]
+        assert isinstance(save_input["styles"], str)
+        assert json.loads(save_input["styles"]) == {
+            "fontFamily": "Inter",
+            "backgroundColor": {"light": "#fff"},
+        }
+
+    @pytest.mark.asyncio
+    async def test_missing_styles(self):
+        """configure_connect_kit returns MISSING_PARAM when styles not provided."""
+        result = await configure_connect_kit({})
+
+        data = _parse_result(result)
+        assert data["error"] == "MISSING_PARAM"
+
+    @pytest.mark.asyncio
+    async def test_invalid_styles_type(self):
+        """configure_connect_kit returns MISSING_PARAM when styles is not a dict."""
+        result = await configure_connect_kit({"styles": "not_a_dict"})
+
+        data = _parse_result(result)
+        assert data["error"] == "MISSING_PARAM"
+
+    @pytest.mark.asyncio
+    async def test_gql_error_propagates(self):
+        """configure_connect_kit propagates GraphQL errors."""
+        client = _mock_client()
+        mock_gql = AsyncMock(side_effect=FastnError("GraphQL error"))
+
+        with patch("fastn_mcp.server._get_client", return_value=client), \
+             patch("fastn._http._gql_call_async", mock_gql), \
+             pytest.raises(FastnError):
+            await configure_connect_kit({"styles": {"fontFamily": "Inter"}})
+
+    @pytest.mark.asyncio
+    async def test_closes_client(self):
+        """configure_connect_kit always closes the client even on error."""
+        client = _mock_client()
+        mock_gql = AsyncMock(side_effect=FastnError("boom"))
+
+        with patch("fastn_mcp.server._get_client", return_value=client), \
+             patch("fastn._http._gql_call_async", mock_gql), \
+             pytest.raises(FastnError):
+            await configure_connect_kit({"styles": {"fontFamily": "Inter"}})
+
+        client.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# deploy_flow tests
+# ---------------------------------------------------------------------------
+
+class TestDeployFlow:
+    @pytest.mark.asyncio
+    async def test_deploy_success(self):
+        """deploy_flow calls deployApiToStage and returns result."""
+        client = _mock_client()
+        mock_gql = AsyncMock(return_value={"deployApiToStage": {"id": "fastnCustomAuth", "__typename": "Flow"}})
+
+        with patch("fastn_mcp.server._get_client", return_value=client), \
+             patch("fastn._http._gql_call_async", mock_gql):
+            result = await deploy_flow({"flow_id": "fastnCustomAuth"})
+
+        data = _parse_result(result)
+        assert data["id"] == "fastnCustomAuth"
+        mock_gql.assert_called_once()
+        call_args = mock_gql.call_args
+        variables = call_args[0][2]
+        assert variables["input"]["env"] == "LIVE"
+        assert variables["input"]["id"] == "fastnCustomAuth"
+
+    @pytest.mark.asyncio
+    async def test_deploy_with_stage_and_comment(self):
+        """deploy_flow passes stage and comment to the mutation."""
+        client = _mock_client()
+        mock_gql = AsyncMock(return_value={"deployApiToStage": {"id": "myFlow"}})
+
+        with patch("fastn_mcp.server._get_client", return_value=client), \
+             patch("fastn._http._gql_call_async", mock_gql):
+            result = await deploy_flow({
+                "flow_id": "myFlow",
+                "stage": "DRAFT",
+                "comment": "testing draft deploy",
+            })
+
+        data = _parse_result(result)
+        assert data["id"] == "myFlow"
+        variables = mock_gql.call_args[0][2]
+        assert variables["input"]["env"] == "DRAFT"
+        assert variables["input"]["comment"] == "testing draft deploy"
+
+    @pytest.mark.asyncio
+    async def test_deploy_uses_workspace_id(self):
+        """deploy_flow uses the client's workspace_id as clientId."""
+        client = _mock_client()
+        client._config.resolve_project_id.return_value = "proj-abc-123"
+        mock_gql = AsyncMock(return_value={"deployApiToStage": {"id": "fastnCustomAuth"}})
+
+        with patch("fastn_mcp.server._get_client", return_value=client), \
+             patch("fastn._http._gql_call_async", mock_gql):
+            result = await deploy_flow({"flow_id": "fastnCustomAuth"})
+
+        variables = mock_gql.call_args[0][2]
+        assert variables["input"]["clientId"] == "proj-abc-123"
+
+    @pytest.mark.asyncio
+    async def test_missing_flow_id(self):
+        """deploy_flow returns MISSING_PARAM when flow_id not provided."""
+        result = await deploy_flow({})
+        data = _parse_result(result)
+        assert data["error"] == "MISSING_PARAM"
+
+    @pytest.mark.asyncio
+    async def test_invalid_stage(self):
+        """deploy_flow returns INVALID_PARAM for bad stage value."""
+        result = await deploy_flow({"flow_id": "x", "stage": "STAGING"})
+        data = _parse_result(result)
+        assert data["error"] == "INVALID_PARAM"
 
 
 # ---------------------------------------------------------------------------
@@ -2999,8 +3585,8 @@ class TestServerMode:
         _server_mod._server_mode = "ucl"
         tools = await handle_list_tools()
         names = {t.name for t in tools}
-        agent_tools = {"list_flows", "run_flow", "delete_flow", "create_flow",
-                       "update_flow", "configure_custom_auth"}
+        agent_tools = {"list_flows", "run_flow", "delete_flow", "generate_flow",
+                       "update_flow", "configure_connect_kit_auth"}
         assert names.isdisjoint(agent_tools)
 
     def test_get_client_uses_contextvar_project_id(self):

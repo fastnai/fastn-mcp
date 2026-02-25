@@ -37,3 +37,4 @@ Thumbs.db
 
 # Claude Code local settings
 .claude/
+.fastn/config.json

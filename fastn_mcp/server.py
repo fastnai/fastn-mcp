@@ -3,8 +3,8 @@
 Exposes MCP tools for AI agents and apps (Claude Desktop, Cursor, Lovable, and any MCP client):
 
   UCL:    find_tools, execute_tool, list_connectors, list_skills, list_projects
-  Agent:  list_flows, run_flow, delete_flow, create_flow*, update_flow*,
-          configure_custom_auth
+  Agent:  list_flows, run_flow, delete_flow, generate_flow*, update_flow*,
+          configure_connect_kit_auth, configure_connect_kit
 
 Transports:
   stdio            Local pipe (Claude Desktop / Cursor)
@@ -20,7 +20,9 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import re as _re
+import uuid
 from contextvars import ContextVar
 from typing import Any, Dict, Optional
 
@@ -50,6 +52,48 @@ mutation deleteModelSchema($input: GetEntityInput!) {
 }
 """
 
+# GraphQL for Connect Kit metadata
+_GET_KIT_METADATA_QUERY = """
+query GetWidgetMetadata($input: GetEntityInput!) {
+  widgetMetadata(input: $input) {
+    authenticationApi
+    isCustomAuthenticationEnabled
+    filterWidgets
+    showFilterBar
+    showLabels
+    isRBACEnabled
+    styles
+    disableFor
+    isAIAgentWidgetEnabled
+    labelsLayout
+    advancedSettings
+    widgetsMetrics
+    __typename
+  }
+}
+"""
+
+_SAVE_KIT_METADATA_MUTATION = """
+mutation SaveWidgetMetadata($input: SaveWidgetMetadataInput!) {
+  saveWidgetMetadata(input: $input) {
+    authenticationApi
+    isCustomAuthenticationEnabled
+    advancedSettings
+    __typename
+  }
+}
+"""
+
+# GraphQL mutation for deploying flows to a stage
+_DEPLOY_FLOW_MUTATION = """
+mutation deployApiToStage($input: deployApiToStageInput!) {
+  deployApiToStage(input: $input) {
+    id
+    __typename
+  }
+}
+"""
+
 # ---------------------------------------------------------------------------
 # Default server instance — used for stdio transport and as fallback
 # ---------------------------------------------------------------------------
@@ -63,7 +107,7 @@ _SERVER_INSTRUCTIONS = (
     "To execute an action → find_tools → execute_tool. "
     "If find_tools returns nothing relevant → list_connectors (connector may need connecting). "
     "If any tool returns WORKSPACE_NOT_SET → list_projects, then pass project_id. "
-    "For multi-step automations use create_flow, then trigger with run_flow. "
+    "For multi-step automations use generate_flow, then trigger with run_flow. "
     "When generating backend code (Edge Functions, API routes), call Fastn REST API "
     "at https://live.fastn.ai/api/ucl/executeTool with headers x-fastn-api-key and "
     "x-fastn-space-id. Never install per-service SDKs — Fastn handles all auth."
@@ -91,6 +135,7 @@ _active_sse_sessions: set[str] = set()
 _server_mode: str = "agent"
 _server_project_id: str | None = None
 _server_skill_id: str | None = None
+_server_url: str | None = None
 
 UCL_TOOL_NAMES = {"find_tools", "execute_tool", "list_connectors", "list_skills", "list_projects"}
 
@@ -281,6 +326,267 @@ async def _sdk_client(arguments: Dict[str, Any]):
 # Tool definitions
 # ---------------------------------------------------------------------------
 
+# -- Reusable sub-schemas (inlined from theme.mcp.schema.json $defs) --------
+
+_CSS_COLOR = {"type": "string", "description": "CSS color: hex, rgb(), rgba(), hsl()"}
+_CSS_SIZE = {"type": "string", "description": "CSS size (px/rem/em/%)"}
+_CSS_SPACING = {"type": "string", "description": "CSS spacing (1-4 values, px/rem/em)"}
+_CSS_RADIUS = {"type": "string", "description": "CSS border-radius"}
+_FONT_WEIGHT = {
+    "type": "integer",
+    "description": "Font weight (100-900, multiples of 100)",
+    "minimum": 100,
+    "maximum": 900,
+}
+
+_LIGHT_DARK_COLOR = {
+    "type": "object",
+    "description": "Color split by light/dark mode.",
+    "additionalProperties": False,
+    "properties": {
+        "light": _CSS_COLOR,
+        "dark": _CSS_COLOR,
+    },
+}
+
+_SEMANTIC_COLORS = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "text": _CSS_COLOR,
+        "success": _CSS_COLOR,
+        "error": _CSS_COLOR,
+    },
+}
+
+_BUTTON_HOVER = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "backgroundColor": _CSS_COLOR,
+        "textColor": _CSS_COLOR,
+    },
+}
+
+_BUTTON_VARIANT = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "backgroundColor": _CSS_COLOR,
+        "textColor": _CSS_COLOR,
+        "hover": _BUTTON_HOVER,
+    },
+}
+
+_BUTTON_VARIANT_WITH_BORDER = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "backgroundColor": _CSS_COLOR,
+        "textColor": _CSS_COLOR,
+        "hover": _BUTTON_HOVER,
+        "border": {"type": "string", "description": "CSS border, e.g. '1px solid #4338ca'"},
+    },
+}
+
+_BUTTON_THEME = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "primary": _BUTTON_VARIANT,
+        "secondary": _BUTTON_VARIANT_WITH_BORDER,
+        "tertiary": _BUTTON_VARIANT_WITH_BORDER,
+    },
+}
+
+_CARD_DISABLED = {
+    "type": "object",
+    "description": "Disabled-state overrides for cards.",
+    "additionalProperties": False,
+    "properties": {
+        "cursor": {"type": "string", "default": "not-allowed"},
+        "opacity": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.95},
+        "pointerEvents": {"type": "string", "default": "none"},
+        "backgroundColor": _CSS_COLOR,
+    },
+}
+
+_CARD_MODE_STYLE = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "width": {"type": "string", "description": "CSS width"},
+        "minWidth": {"type": "string", "description": "CSS min-width"},
+        "height": {"type": "string", "description": "CSS height"},
+        "padding": _CSS_SPACING,
+        "border": {"type": "string", "description": "CSS border"},
+        "borderRadius": _CSS_RADIUS,
+        "boxShadow": {"type": "string", "description": "CSS box-shadow"},
+        "disabled": _CARD_DISABLED,
+    },
+}
+
+_TYPOGRAPHY_BLOCK = {
+    "type": "object",
+    "description": "Typography token group.",
+    "additionalProperties": False,
+    "properties": {
+        "fontSize": _CSS_SIZE,
+        "lineHeight": _CSS_SIZE,
+        "fontWeight": _FONT_WEIGHT,
+    },
+}
+
+_FILTER_BUTTON_STYLE = {
+    "type": "object",
+    "description": "Button styles inside filter UI.",
+    "additionalProperties": False,
+    "properties": {
+        "fontSize": {**_CSS_SIZE, "default": "14px"},
+        "fontWeight": {**_FONT_WEIGHT, "default": 500},
+        "padding": {**_CSS_SPACING, "default": "8px 20px"},
+        "borderRadius": {**_CSS_RADIUS, "default": "24px"},
+        "primary": _BUTTON_VARIANT,
+        "secondary": _BUTTON_VARIANT_WITH_BORDER,
+    },
+}
+
+_FILTER_MODE_STYLE = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "backgroundColor": _CSS_COLOR,
+        "button": _FILTER_BUTTON_STYLE,
+    },
+}
+
+# -- Complete theme schema (matches theme.mcp.schema.json) -------------------
+
+_THEME_SCHEMA: dict = {
+    "type": "object",
+    "description": (
+        "Theme configuration for the Connect Kit widget. Supports light/dark "
+        "modes. All fields have sensible defaults — only override the fields "
+        "you need to change."
+    ),
+    "additionalProperties": False,
+    "required": ["fontFamily"],
+    "properties": {
+        "mode": {
+            "type": "string",
+            "description": "Preferred color mode.",
+            "enum": ["light", "dark", "system"],
+            "default": "system",
+        },
+        "fontFamily": {
+            "type": "string",
+            "description": "CSS font-family stack.",
+            "default": "Inter, system-ui, sans-serif",
+        },
+        "backgroundColor": {
+            **_LIGHT_DARK_COLOR,
+            "description": "Primary surface background color.",
+        },
+        "secondaryBackgroundColor": {
+            **_LIGHT_DARK_COLOR,
+            "description": "Secondary surface background (filters, panels).",
+        },
+        "color": {
+            "type": "object",
+            "description": "Semantic text + status colors per mode.",
+            "additionalProperties": False,
+            "properties": {
+                "light": _SEMANTIC_COLORS,
+                "dark": _SEMANTIC_COLORS,
+            },
+        },
+        "card": {
+            "type": "object",
+            "description": "Card component styling per mode.",
+            "additionalProperties": False,
+            "properties": {
+                "light": _CARD_MODE_STYLE,
+                "dark": _CARD_MODE_STYLE,
+            },
+        },
+        "button": {
+            "type": "object",
+            "description": "Button base sizing + per-mode variants.",
+            "additionalProperties": False,
+            "properties": {
+                "fontSize": {**_CSS_SIZE, "default": "16px"},
+                "fontWeight": {**_FONT_WEIGHT, "default": 400},
+                "padding": {**_CSS_SPACING, "default": "8px 20px"},
+                "lineHeight": {**_CSS_SIZE, "default": "20px"},
+                "borderRadius": {**_CSS_RADIUS, "default": "24px"},
+                "light": _BUTTON_THEME,
+                "dark": _BUTTON_THEME,
+            },
+        },
+        "avatar": {
+            "type": "object",
+            "description": "Avatar image shape and sizing.",
+            "additionalProperties": False,
+            "properties": {
+                "width": {**_CSS_SIZE, "default": "46px"},
+                "height": {**_CSS_SIZE, "default": "46px"},
+                "borderRadius": {
+                    "type": "string",
+                    "description": "CSS border-radius (px/rem/%).",
+                    "default": "12%",
+                },
+            },
+        },
+        "header": {**_TYPOGRAPHY_BLOCK, "description": "Header typography."},
+        "title": {**_TYPOGRAPHY_BLOCK, "description": "Title typography."},
+        "description": {**_TYPOGRAPHY_BLOCK, "description": "Description typography."},
+        "content": {**_TYPOGRAPHY_BLOCK, "description": "Body/content typography."},
+        "popModalPosition": {
+            "type": "string",
+            "description": "Popover/modal anchor position.",
+            "enum": [
+                "topCenter", "topLeft", "topRight",
+                "bottomCenter", "bottomLeft", "bottomRight",
+                "center",
+            ],
+            "default": "topCenter",
+        },
+        "modal": {
+            "type": "object",
+            "description": "Modal overlay and content styling.",
+            "additionalProperties": False,
+            "properties": {
+                "overlay": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "backgroundColor": {**_CSS_COLOR, "default": "rgba(0, 0, 0, 0.5)"},
+                        "backdropFilter": {
+                            "type": "string",
+                            "description": "CSS backdrop-filter.",
+                            "default": "blur(10px)",
+                        },
+                    },
+                },
+                "content": {
+                    "type": "object",
+                    "description": "Free-form modal content style overrides.",
+                    "additionalProperties": True,
+                },
+            },
+        },
+        "filterStyles": {
+            "type": "object",
+            "description": "Filter bar/panel styling per mode.",
+            "additionalProperties": False,
+            "properties": {
+                "light": _FILTER_MODE_STYLE,
+                "dark": _FILTER_MODE_STYLE,
+            },
+        },
+    },
+}
+
 TOOLS = [
     # =====================================================================
     # UCL TOOLS
@@ -403,7 +709,7 @@ TOOLS = [
     # FLOW MANAGEMENT TOOLS
     # Manage saved automations (flows). Use list_flows to see existing
     # flows, run_flow to execute them, delete_flow to remove them.
-    # create_flow and update_flow are under development.
+    # generate_flow and update_flow are under development.
     # =====================================================================
     Tool(
         name="list_flows",
@@ -423,10 +729,32 @@ TOOLS = [
         },
     ),
     Tool(
+        name="get_flow_schema",
+        description=(
+            "Get the input schema of a specific flow. Each flow has its own "
+            "unique input parameters — you MUST call this for the specific "
+            "flow_id you intend to run BEFORE calling run_flow. Returns "
+            "field names and a JSON Schema describing the expected input. "
+            "Do NOT reuse or guess parameters from other flows."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "flow_id": {
+                    "type": "string",
+                    "description": "The flow_id from list_flows",
+                },
+            },
+            "required": ["flow_id"],
+        },
+    ),
+    Tool(
         name="run_flow",
         description=(
-            "Execute a saved automation by its flow_id. Get the flow_id "
-            "from list_flows first. Returns the execution result directly."
+            "Execute a saved automation by its flow_id. IMPORTANT: You MUST "
+            "call get_flow_schema for this specific flow_id first to discover "
+            "its required input parameters. Each flow has different parameters "
+            "— never guess or reuse parameters from another flow."
         ),
         inputSchema={
             "type": "object",
@@ -461,22 +789,22 @@ TOOLS = [
         },
     ),
     Tool(
-        name="create_flow",
+        name="generate_flow",
         description=(
-            "(Under development) Create an automation from a natural "
-            "language prompt. Not yet available. To run connector tools "
-            "now, use: find_tools → execute_tool."
+            "Create an automation flow interactively. Returns a popup_url "
+            "to the fastn flow builder where the user can describe what "
+            "they want, answer clarifying questions, and see the generated "
+            "flow — all without going back and forth through the LLM. "
+            "IMPORTANT: Always present the popup_url to the user as a "
+            "clickable markdown link: [Open Flow Builder](popup_url). "
+            "Do NOT show the raw URL as plain text."
         ),
         inputSchema={
             "type": "object",
             "properties": {
                 "prompt": {
                     "type": "string",
-                    "description": "Plain English description of the automation to create",
-                },
-                "answers": {
-                    "type": "object",
-                    "description": "Key-value pairs answering questions from a previous call",
+                    "description": "What the user wants to automate, e.g. 'Send a Slack message when a Jira ticket is created'",
                 },
             },
             "required": ["prompt"],
@@ -508,31 +836,93 @@ TOOLS = [
     # Setup and configuration for the project.
     # =====================================================================
     Tool(
-        name="configure_custom_auth",
+        name="configure_connect_kit_auth",
         description=(
             "Register a custom auth provider so Fastn can validate end-user "
-            "JWTs. Call this after configuring Auth0, Firebase Auth, Supabase "
-            "Auth, or similar. Once registered, pass end-user tokens in API "
-            "calls for per-user authorization."
+            "tokens. Provide your auth provider URL (OIDC issuer, Keycloak "
+            "realm, Supabase project, or direct userinfo endpoint — the "
+            "correct userinfo URL is resolved automatically), a user JWT "
+            "token to verify it works, and the user's ID so their connector "
+            "connections are saved under their identity. Once configured, "
+            "pass end-user tokens via the X-User-Token header."
         ),
         inputSchema={
             "type": "object",
             "properties": {
-                "issuer_url": {
+                "auth_url": {
                     "type": "string",
-                    "description": 'The "iss" claim value in your JWTs',
+                    "description": (
+                        "Your auth provider URL — can be an OIDC issuer URL, "
+                        "Keycloak realm URL (e.g. https://auth.example.com/realms/myapp), "
+                        "Supabase project URL, or direct userinfo endpoint. "
+                        "The correct userinfo URL is resolved automatically."
+                    ),
                 },
-                "jwks_uri": {
+                "user_token": {
                     "type": "string",
-                    "description": "The JWKS endpoint URL",
+                    "description": "A valid user JWT token to verify the auth endpoint works before configuring",
                 },
-                "user_id_claim": {
+                "user_id": {
                     "type": "string",
-                    "description": 'The JWT claim to use as the user ID. Defaults to "sub".',
-                    "default": "sub",
+                    "description": (
+                        "The logged-in user's unique ID. Connector connections "
+                        "are saved under this identity. If omitted, extracted "
+                        "from the 'sub' claim in the userinfo response."
+                    ),
                 },
             },
-            "required": ["issuer_url", "jwks_uri"],
+            "required": ["auth_url", "user_token"],
+        },
+    ),
+    Tool(
+        name="deploy_flow",
+        description=(
+            "Deploy a flow to a specific stage (DRAFT or LIVE). Use this to "
+            "activate flow changes in production. For example, after "
+            "configure_connect_kit_auth you MUST call this with "
+            'flow_id="fastnCustomAuth" and stage="LIVE" to activate the config.'
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "flow_id": {
+                    "type": "string",
+                    "description": "The flow ID to deploy (e.g. 'fastnCustomAuth')",
+                },
+                "stage": {
+                    "type": "string",
+                    "enum": ["DRAFT", "LIVE"],
+                    "description": "Target stage — DRAFT or LIVE",
+                    "default": "LIVE",
+                },
+                "comment": {
+                    "type": "string",
+                    "description": "Optional deployment comment",
+                },
+            },
+            "required": ["flow_id"],
+        },
+    ),
+    # =====================================================================
+    # CONNECT KIT TOOLS
+    # Manage Connect Kit styling and appearance.
+    # =====================================================================
+    Tool(
+        name="configure_connect_kit",
+        description=(
+            "Update the Connect Kit styling for the current project. "
+            "The styles schema describes every supported field with types, "
+            "defaults, and constraints — use it to generate a valid theme. "
+            "Top-level style keys: mode, fontFamily, backgroundColor, "
+            "secondaryBackgroundColor, color, card, button, avatar, header, "
+            "title, description, content, popModalPosition, modal, filterStyles."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "styles": _THEME_SCHEMA,
+            },
+            "required": ["styles"],
         },
     ),
 ]
@@ -630,12 +1020,65 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
 # Tool handlers
 # ---------------------------------------------------------------------------
 
-async def _handle_create_flow(arguments: dict) -> list[TextContent]:
-    """Create a flow — under development."""
-    return _error_result(
-        "UNDER_DEVELOPMENT",
-        "Flow creation is under development. Use find_tools → execute_tool.",
+async def _handle_generate_flow(arguments: dict) -> list[TextContent]:
+    """Return a popup URL for the interactive flow builder.
+
+    The popup handles the multi-turn conversation directly with the
+    fastn API — no LLM mediation needed.
+    """
+    prompt = arguments.get("prompt", "")
+    if not prompt:
+        return _error_result("MISSING_PARAM", "prompt is required")
+
+    # Resolve auth token (JWT only)
+    auth_token, token_source = _resolve_auth_token(arguments)
+    if not auth_token:
+        return _error_result(
+            "INVALID_TOKEN",
+            "No auth token available. Authenticate via OAuth.",
+        )
+
+    # Resolve project ID
+    req_headers = _resolve_request_headers()
+    project_id = (
+        arguments.get("project_id")
+        or req_headers.get("project_id")
+        or _request_project_id.get()
+        or _server_project_id
+        or ""
     )
+
+    # Generate session ID for this flow builder conversation
+    session_id = str(uuid.uuid4())
+
+    # Build popup URL — use FASTN_FLOW_BUILDER_URL env var,
+    # or fall back to --server-url + /flow-builder.html
+    from urllib.parse import quote
+    base_url = os.environ.get("FASTN_FLOW_BUILDER_URL", "")
+    if not base_url and _server_url:
+        base_url = _server_url.rstrip("/") + "/flow-builder.html"
+    if not base_url:
+        return _error_result(
+            "CONFIG_ERROR",
+            "Cannot determine flow builder URL. Pass --server-url or set FASTN_FLOW_BUILDER_URL.",
+        )
+
+    popup_url = (
+        f"{base_url}?token={quote(auth_token)}"
+        f"&project={quote(project_id)}"
+        f"&session={quote(session_id)}"
+        f"&prompt={quote(prompt)}"
+    )
+
+    return _success_result({
+        "popup_url": popup_url,
+        "session_id": session_id,
+        "project_id": project_id,
+        "message": (
+            f"Your flow builder is ready! "
+            f"[Open Flow Builder]({popup_url})"
+        ),
+    })
 
 
 async def _handle_update_flow(arguments: dict) -> list[TextContent]:
@@ -658,6 +1101,17 @@ async def _handle_delete_flow(arguments: dict) -> list[TextContent]:
         return _success_result({"deleted": True, "flow_id": flow_id, "result": result.get("deleteModelSchema")})
 
 
+async def _handle_get_flow_schema(arguments: dict) -> list[TextContent]:
+    """Get the input schema for a specific flow."""
+    flow_id = arguments.get("flow_id", "")
+    if not flow_id:
+        return _error_result("MISSING_PARAM", "flow_id is required")
+
+    async with _sdk_client(arguments) as client:
+        result = await client.flows.schema(flow_id)
+        return _success_result(result)
+
+
 async def _handle_run_flow(arguments: dict) -> list[TextContent]:
     """Execute a flow by its flow_id."""
     flow_id = arguments.get("flow_id", "")
@@ -665,7 +1119,7 @@ async def _handle_run_flow(arguments: dict) -> list[TextContent]:
         return _error_result("MISSING_PARAM", "flow_id is required")
 
     async with _sdk_client(arguments) as client:
-        result = await client.execute(tool=flow_id, params=arguments.get("parameters", {}))
+        result = await client.flows.run(flow_id, input_data=arguments.get("parameters", {}))
         return _success_result(result)
 
 
@@ -741,14 +1195,214 @@ async def _handle_execute_tool(arguments: dict) -> list[TextContent]:
         return _success_result(result)
 
 
-async def _handle_configure_custom_auth(arguments: dict) -> list[TextContent]:
+async def _resolve_userinfo_url(url: str, http) -> str | None:
+    """Resolve an auth-related URL to the correct userinfo endpoint.
+
+    Supports:
+    - Direct userinfo URLs (passthrough)
+    - Keycloak realm URLs → .../protocol/openid-connect/userinfo
+    - Supabase project URLs → .../auth/v1/user
+    - OIDC Discovery → fetch .well-known/openid-configuration
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url.rstrip("/"))
+    path = parsed.path
+
+    # Already a userinfo endpoint (direct URL or custom function)
+    if path.endswith(("/userinfo", "/user", "/auth-userinfo")):
+        return url
+
+    # Keycloak: .../realms/<realm> → .../realms/<realm>/protocol/openid-connect/userinfo
+    if "/realms/" in path:
+        base = url.rstrip("/")
+        # Strip trailing /protocol/... if partially provided
+        if "/protocol/" in base:
+            base = base[: base.index("/protocol/")]
+        return f"{base}/protocol/openid-connect/userinfo"
+
+    # Supabase — only rewrite bare project URLs (no meaningful path)
+    # Custom endpoints like /functions/v1/auth-userinfo are already handled above
+    host = parsed.hostname or ""
+    if ("supabase.co" in host or "supabase.in" in host) and not path.strip("/"):
+        return f"{parsed.scheme}://{parsed.netloc}/auth/v1/user"
+
+    # OIDC Discovery
+    discovery_url = f"{url.rstrip('/')}/.well-known/openid-configuration"
+    try:
+        resp = await http.get(discovery_url, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            endpoint = data.get("userinfo_endpoint")
+            if endpoint:
+                return endpoint
+    except Exception:
+        pass
+
+    return None
+
+
+async def _handle_configure_connect_kit_auth(arguments: dict) -> list[TextContent]:
     """Register a custom auth provider with Fastn."""
-    async with _sdk_client(arguments) as client:
-        result = await client.configure_custom_auth(
-            issuer_url=arguments["issuer_url"],
-            jwks_uri=arguments["jwks_uri"],
-            user_id_claim=arguments.get("user_id_claim", "sub"),
+    import httpx
+    from fastn._http import _gql_call_async
+    from fastn._constants import _UPDATE_RESOLVER_STEP_MUTATION
+    from fastn._auth_ns import _build_custom_auth_step
+
+    auth_url = arguments.get("auth_url", "")
+    if not auth_url:
+        return _error_result("MISSING_PARAM", "auth_url is required")
+
+    user_token = arguments.get("user_token", "")
+    if not user_token:
+        return _error_result("MISSING_PARAM", "user_token is required")
+
+    async with httpx.AsyncClient() as http:
+        # Resolve the auth URL to a userinfo endpoint
+        userinfo_url = await _resolve_userinfo_url(auth_url, http)
+        if not userinfo_url:
+            return _error_result(
+                "RESOLUTION_FAILED",
+                f"Could not resolve a userinfo endpoint from '{auth_url}'. "
+                "Provide an OIDC issuer URL, Keycloak realm URL, Supabase "
+                "project URL, or a direct userinfo endpoint URL.",
+            )
+
+        # Verify the resolved endpoint works with the provided token
+        try:
+            resp = await http.get(
+                userinfo_url,
+                headers={"Authorization": f"Bearer {user_token}"},
+                timeout=10,
+            )
+        except httpx.RequestError as exc:
+            return _error_result(
+                "VERIFICATION_FAILED",
+                f"Could not reach userinfo endpoint ({userinfo_url}): {exc}",
+            )
+
+    if resp.status_code != 200:
+        return _error_result(
+            "VERIFICATION_FAILED",
+            f"Userinfo endpoint ({userinfo_url}) returned {resp.status_code}: {resp.text[:500]}",
         )
+
+    # Endpoint verified — resolve user_id from argument or userinfo 'sub' claim
+    userinfo = resp.json()
+    user_id = arguments.get("user_id") or userinfo.get("sub", "")
+
+    # Pass user_id as tenant_id so connector connections are saved under this user
+    arguments.setdefault("tenant_id", user_id)
+
+    # Call the Fastn GraphQL API directly (bypasses SDK's _ensure_fresh_token)
+    # using the Fastn OAuth token from the MCP auth context
+    async with _sdk_client(arguments) as client:
+        workspace_id = client._config.resolve_project_id()
+        variables = _build_custom_auth_step(workspace_id, userinfo_url)
+        result = await _gql_call_async(client, _UPDATE_RESOLVER_STEP_MUTATION, variables)
+        return _success_result({
+            **result,
+            "verified_user": userinfo,
+            "user_id": user_id,
+            "resolved_userinfo_url": userinfo_url,
+            "review_url": f"https://app.ucl.dev/projects/{workspace_id}/ucl/configure-auth",
+            "next_step": (
+                'Call deploy_flow with flow_id="fastnCustomAuth" and stage="LIVE" '
+                "to activate in production. Then call configure_connect_kit with a "
+                "styles object to customize the Connect Kit appearance."
+            ),
+        })
+
+
+async def _handle_deploy_flow(arguments: dict) -> list[TextContent]:
+    """Deploy a flow to DRAFT or LIVE stage."""
+    from fastn._http import _gql_call_async
+
+    flow_id = arguments.get("flow_id", "")
+    if not flow_id:
+        return _error_result("MISSING_PARAM", "flow_id is required")
+
+    stage = arguments.get("stage", "LIVE").upper()
+    if stage not in ("DRAFT", "LIVE"):
+        return _error_result("INVALID_PARAM", "stage must be DRAFT or LIVE")
+
+    comment = arguments.get("comment", "")
+
+    async with _sdk_client(arguments) as client:
+        workspace_id = client._config.resolve_project_id()
+        variables = {
+            "input": {
+                "clientId": workspace_id,
+                "env": stage,
+                "id": flow_id,
+                "comment": comment,
+            }
+        }
+        result = await _gql_call_async(client, _DEPLOY_FLOW_MUTATION, variables)
+        return _success_result(result.get("deployApiToStage", result))
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge *override* into *base* (returns a new dict)."""
+    merged = base.copy()
+    for key, value in override.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+async def _handle_configure_connect_kit(arguments: dict) -> list[TextContent]:
+    """Update Connect Kit styling for the current project."""
+    from fastn._http import _gql_call_async
+
+    styles = arguments.get("styles")
+    if not styles or not isinstance(styles, dict):
+        return _error_result("MISSING_PARAM", "styles is required and must be an object")
+
+    async with _sdk_client(arguments) as client:
+        workspace_id = client._config.resolve_project_id()
+
+        # Fetch existing config via direct GraphQL (bypass _ensure_fresh_token)
+        get_variables = {"input": {"id": workspace_id, "clientId": workspace_id}}
+        get_data = await _gql_call_async(client, _GET_KIT_METADATA_QUERY, get_variables)
+        existing = get_data.get("widgetMetadata") or {}
+
+        # Parse styles — the API may return them as a JSON string.
+        raw_styles = existing.get("styles", {})
+        if isinstance(raw_styles, str):
+            try:
+                raw_styles = json.loads(raw_styles)
+            except (json.JSONDecodeError, TypeError):
+                raw_styles = {}
+        existing_styles = raw_styles if isinstance(raw_styles, dict) else {}
+        merged_styles = _deep_merge(existing_styles, styles)
+
+        # Preserve all existing config fields, only replace styles.
+        settings: dict = {}
+        _PRESERVE_KEYS = (
+            "authenticationApi",
+            "isCustomAuthenticationEnabled",
+            "filterWidgets",
+            "showFilterBar",
+            "showLabels",
+            "isRBACEnabled",
+            "disableFor",
+            "isAIAgentWidgetEnabled",
+            "labelsLayout",
+            "advancedSettings",
+            "widgetsMetrics",
+        )
+        for key in _PRESERVE_KEYS:
+            if key in existing:
+                settings[key] = existing[key]
+        settings["styles"] = json.dumps(merged_styles)
+
+        # Save via direct GraphQL (bypass _ensure_fresh_token)
+        save_variables = {"input": {"projectId": workspace_id, **settings}}
+        save_data = await _gql_call_async(client, _SAVE_KIT_METADATA_MUTATION, save_variables)
+        result = save_data.get("saveWidgetMetadata") or {}
         return _success_result(result)
 
 
@@ -793,11 +1447,14 @@ _TOOL_HANDLERS = {
     "list_connectors": _handle_list_connectors,
     "execute_tool": _handle_execute_tool,
     "list_flows": _handle_list_flows,
+    "get_flow_schema": _handle_get_flow_schema,
     "run_flow": _handle_run_flow,
     "delete_flow": _handle_delete_flow,
-    "create_flow": _handle_create_flow,
+    "generate_flow": _handle_generate_flow,
     "update_flow": _handle_update_flow,
-    "configure_custom_auth": _handle_configure_custom_auth,
+    "configure_connect_kit_auth": _handle_configure_connect_kit_auth,
+    "deploy_flow": _handle_deploy_flow,
+    "configure_connect_kit": _handle_configure_connect_kit,
     "list_skills": _handle_list_skills,
     "list_projects": _handle_list_projects,
 }
@@ -1132,7 +1789,25 @@ def create_starlette_app(
             "modes": modes,
         })
 
+    # ── Flow builder popup ─────────────────────────────────────────────
+    # Serve the single-file popup HTML from fastn-agent-kit/dist/
+    _flow_builder_html_path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "fastn-agent-kit", "dist", "flow-builder.html"
+    )
+
+    async def handle_flow_builder(request: Request):
+        from starlette.responses import HTMLResponse
+        resolved = os.path.abspath(_flow_builder_html_path)
+        if os.path.isfile(resolved):
+            with open(resolved) as f:
+                return HTMLResponse(f.read())
+        return JSONResponse(
+            {"error": "flow-builder.html not found. Run npm run build in fastn-agent-kit."},
+            status_code=404,
+        )
+
     routes = list(auth_routes)
+    routes.append(Route("/flow-builder.html", endpoint=handle_flow_builder, methods=["GET"]))
     routes.append(Route("/", endpoint=handle_root, methods=["GET"]))
     transport_names = []
 
@@ -1415,6 +2090,9 @@ async def main(
             scheme = "http"
             display_host = "localhost" if host == "0.0.0.0" else host
             server_url = f"{scheme}://{display_host}:{port}"
+
+        global _server_url
+        _server_url = server_url
 
         _print_startup_info(
             transport=transport,
