@@ -1910,10 +1910,12 @@ def create_starlette_app(
         })
 
     # ── Flow builder popup ─────────────────────────────────────────────
-    # Serve the single-file popup HTML from fastn-agent-kit/dist/
-    _flow_builder_html_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "fastn-agent-kit", "dist", "flow-builder.html"
-    )
+    # Serve the single-file popup HTML.
+    # 1) Package static dir (Docker / pip install)
+    # 2) Sibling repo dev fallback (fastn-agent-kit/dist/)
+    _pkg_static = os.path.join(os.path.dirname(__file__), "static", "flow-builder.html")
+    _dev_fallback = os.path.join(os.path.dirname(__file__), "..", "..", "fastn-agent-kit", "dist", "flow-builder.html")
+    _flow_builder_html_path = _pkg_static if os.path.isfile(_pkg_static) else _dev_fallback
 
     async def handle_flow_builder(request: Request):
         from starlette.responses import HTMLResponse
