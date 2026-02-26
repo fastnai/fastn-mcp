@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>fastn — Flow Builder</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -12,12 +15,13 @@
         extend: {
           colors: {
             fastn: {
-              bg: '#0a0a0a',
-              surface: '#141414',
-              border: '#262626',
-              accent: 'hsl(213, 80%, 55%)',
-              'accent-hover': 'hsl(213, 80%, 45%)',
-              muted: '#737373',
+              bg: '#09090E',
+              surface: '#111118',
+              border: '#2E2E3A',
+              accent: '#4F3FFF',
+              'accent-hover': '#3B2DE8',
+              'accent-light': '#7B6FFF',
+              muted: '#B0B0C8',
             }
           }
         }
@@ -25,10 +29,10 @@
     }
   </script>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    body { font-family: 'Inter', sans-serif; }
     .chat-scroll::-webkit-scrollbar { width: 6px; }
     .chat-scroll::-webkit-scrollbar-track { background: transparent; }
-    .chat-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+    .chat-scroll::-webkit-scrollbar-thumb { background: #2E2E3A; border-radius: 3px; }
     @keyframes pulse-dot {
       0%, 80%, 100% { opacity: 0.3; }
       40% { opacity: 1; }
@@ -37,59 +41,62 @@
     .loading-dot:nth-child(2) { animation-delay: 0.2s; }
     .loading-dot:nth-child(3) { animation-delay: 0.4s; }
     @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
-    @keyframes slide-up { from { opacity: 0; transform: translateY(24px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+    @keyframes slide-up {
+      from { opacity: 0; transform: translateY(24px) scale(0.97); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
     .backdrop-animate { animation: fade-in 0.2s ease-out; }
-    .card-animate { animation: slide-up 0.3s ease-out; }
+    .card-animate { animation: slide-up 0.3s ease-out forwards; }
   </style>
-  <script type="module" crossorigin>(function(){const t=document.createElement("link").relList;if(t&&t.supports&&t.supports("modulepreload"))return;for(const o of document.querySelectorAll('link[rel="modulepreload"]'))r(o);new MutationObserver(o=>{for(const n of o)if(n.type==="childList")for(const a of n.addedNodes)a.tagName==="LINK"&&a.rel==="modulepreload"&&r(a)}).observe(document,{childList:!0,subtree:!0});function s(o){const n={};return o.integrity&&(n.integrity=o.integrity),o.referrerPolicy&&(n.referrerPolicy=o.referrerPolicy),o.crossOrigin==="use-credentials"?n.credentials="include":o.crossOrigin==="anonymous"?n.credentials="omit":n.credentials="same-origin",n}function r(o){if(o.ep)return;o.ep=!0;const n=s(o);fetch(o.href,n)}})();const A="https://live.fastn.ai/api/v1/flowBuilderAgent",O="b034812a-7d77-4e8e-945e-106656b2676e";let $=crypto.randomUUID(),b="",E="",h=!1;const x=document.getElementById("chat-area"),H=document.getElementById("empty-state"),f=document.getElementById("options-area"),m=document.getElementById("plan-area"),P=document.getElementById("input-form"),d=document.getElementById("input-field"),M=document.getElementById("send-btn"),j=document.getElementById("close-btn");function D(){const e=new URLSearchParams(window.location.search);b=e.get("token")||"",E=e.get("project")||"";const t=e.get("prompt")||"",s=e.get("session");return s&&($=s),t}async function F(e){const t={"Content-Type":"application/json","x-fastn-space-id":O,stage:"DRAFT","x-fastn-custom-auth":"true"};E&&(t["x-fastn-space-tenantid"]=E),b&&(t.authorization=`Bearer ${b}`);const s=await fetch(A,{method:"POST",headers:t,body:JSON.stringify({input:{chatInput:e,sessionID:$}})});if(!s.ok){const o=await s.text();throw new Error(`API error (${s.status}): ${o.slice(0,200)}`)}const r=await s.json();return U(r)}function U(e){let t="",s,r,o;const n=e==null?void 0:e.output;return n&&(n.message&&(t=n.message),n.signal==="ASK_USER"&&Array.isArray(n.options)&&n.options.length&&(r=n.options.map(a=>typeof a=="string"?{title:a}:{title:a.title,description:a.description}),o=n.multiSelect===!0?!0:void 0),n.plan&&(s=n.plan,t||(t=`**${s.name}**
+  <script type="module" crossorigin>(function(){const t=document.createElement("link").relList;if(t&&t.supports&&t.supports("modulepreload"))return;for(const o of document.querySelectorAll('link[rel="modulepreload"]'))i(o);new MutationObserver(o=>{for(const n of o)if(n.type==="childList")for(const r of n.addedNodes)r.tagName==="LINK"&&r.rel==="modulepreload"&&i(r)}).observe(document,{childList:!0,subtree:!0});function s(o){const n={};return o.integrity&&(n.integrity=o.integrity),o.referrerPolicy&&(n.referrerPolicy=o.referrerPolicy),o.crossOrigin==="use-credentials"?n.credentials="include":o.crossOrigin==="anonymous"?n.credentials="omit":n.credentials="same-origin",n}function i(o){if(o.ep)return;o.ep=!0;const n=s(o);fetch(o.href,n)}})();const A="https://live.fastn.ai/api/v1/flowBuilderAgent",P="b034812a-7d77-4e8e-945e-106656b2676e";let B=crypto.randomUUID(),b="",M="",g=!1;const c=document.getElementById("popup-card"),O=document.getElementById("drag-handle"),j=document.getElementById("resize-handle"),y=document.getElementById("chat-area"),D=document.getElementById("empty-state"),m=document.getElementById("options-area"),h=document.getElementById("plan-area"),U=document.getElementById("input-form"),u=document.getElementById("input-field"),I=document.getElementById("send-btn"),W=document.getElementById("close-btn"),F=400,X=320;function Y(){const e=Math.min(672,window.innerWidth-32),t=Math.min(800,window.innerHeight*.85);c.style.width=e+"px",c.style.height=t+"px",c.style.left=(window.innerWidth-e)/2+"px",c.style.top=(window.innerHeight-t)/2+"px"}O.addEventListener("mousedown",e=>{if(e.target.closest("button"))return;e.preventDefault();const t=e.clientX,s=e.clientY,i=c.offsetLeft,o=c.offsetTop;document.body.style.userSelect="none",c.style.transition="none";const n=d=>{let a=i+d.clientX-t,l=o+d.clientY-s;a=Math.max(-c.offsetWidth+48,Math.min(a,window.innerWidth-48)),l=Math.max(0,Math.min(l,window.innerHeight-48)),c.style.left=a+"px",c.style.top=l+"px"},r=()=>{document.removeEventListener("mousemove",n),document.removeEventListener("mouseup",r),document.body.style.userSelect="",c.style.transition=""};document.addEventListener("mousemove",n),document.addEventListener("mouseup",r)});j.addEventListener("mousedown",e=>{e.preventDefault(),e.stopPropagation();const t=e.clientX,s=e.clientY,i=c.offsetWidth,o=c.offsetHeight;document.body.style.userSelect="none",c.style.transition="none";const n=d=>{const a=Math.max(F,i+d.clientX-t),l=Math.max(X,o+d.clientY-s);c.style.width=a+"px",c.style.height=l+"px"},r=()=>{document.removeEventListener("mousemove",n),document.removeEventListener("mouseup",r),document.body.style.userSelect="",c.style.transition=""};document.addEventListener("mousemove",n),document.addEventListener("mouseup",r)});function _(){const e=new URLSearchParams(window.location.search);b=e.get("token")||"",M=e.get("project")||"";const t=e.get("prompt")||"",s=e.get("session");return s&&(B=s),t}async function q(e){const t={"Content-Type":"application/json","x-fastn-space-id":P,stage:"DRAFT","x-fastn-custom-auth":"true"};M&&(t["x-fastn-space-tenantid"]=M),b&&(t.authorization=`Bearer ${b}`);const s=await fetch(A,{method:"POST",headers:t,body:JSON.stringify({input:{chatInput:e,sessionID:B}})});if(!s.ok){const o=await s.text();throw new Error(`API error (${s.status}): ${o.slice(0,200)}`)}const i=await s.json();return R(i)}function R(e){let t="",s,i,o;const n=e==null?void 0:e.output;return n&&(n.message&&(t=n.message),n.signal==="ASK_USER"&&Array.isArray(n.options)&&n.options.length&&(i=n.options.map(r=>typeof r=="string"?{title:r}:{title:r.title,description:r.description}),o=n.multiSelect===!0?!0:void 0),n.plan&&(s=n.plan,t||(t=`**${s.name}**
 
-${s.description}`))),t||(typeof e=="string"?t=e:e!=null&&e.message?t=e.message:t=JSON.stringify(e,null,2)),{text:t,plan:s,options:r,multiSelect:o}}function N(){H.classList.add("hidden")}function v(){requestAnimationFrame(()=>{x.scrollTop=x.scrollHeight})}function c(e){const t=document.createElement("div");return t.textContent=e,t.innerHTML}function q(e){return c(e).replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/`(.+?)`/g,'<code class="bg-fastn-surface px-1 py-0.5 rounded text-xs">$1</code>').replace(/\n/g,"<br>")}function g(e,t){N();const s=document.createElement("div");s.className=`flex ${e==="user"?"justify-end":"justify-start"}`;const r=document.createElement("div");r.className=e==="user"?"bg-fastn-accent text-white rounded-2xl rounded-br-md px-4 py-2.5 max-w-[80%] text-sm break-words":"bg-fastn-surface border border-fastn-border text-white rounded-2xl rounded-bl-md px-4 py-2.5 max-w-[85%] text-sm leading-relaxed break-words",r.innerHTML=q(t),s.appendChild(r),x.appendChild(s),v()}function R(){N();const e=document.createElement("div");e.id="loading-indicator",e.className="flex justify-start";const t=document.createElement("div");t.className="bg-fastn-surface border border-fastn-border rounded-2xl rounded-bl-md px-4 py-3 flex gap-1.5",t.innerHTML=`
+${s.description}`))),t||(typeof e=="string"?t=e:e!=null&&e.message?t=e.message:t=JSON.stringify(e,null,2)),{text:t,plan:s,options:i,multiSelect:o}}function N(){D.classList.add("hidden")}function v(){requestAnimationFrame(()=>{y.scrollTop=y.scrollHeight})}function p(e){const t=document.createElement("div");return t.textContent=e,t.innerHTML}function z(e){return p(e).replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/`(.+?)`/g,'<code class="bg-fastn-surface px-1 py-0.5 rounded text-xs">$1</code>').replace(/\n/g,"<br>")}function x(e,t){N();const s=document.createElement("div");s.className=`flex ${e==="user"?"justify-end":"justify-start"}`;const i=document.createElement("div");i.className=e==="user"?"bg-fastn-accent text-white rounded-2xl rounded-br-md px-4 py-2.5 max-w-[80%] text-sm break-words":"bg-fastn-surface border border-fastn-border text-[#B0B0C8] rounded-2xl rounded-bl-md px-4 py-2.5 max-w-[85%] text-sm leading-relaxed break-words",i.innerHTML=z(t),s.appendChild(i),y.appendChild(s),v()}function K(){N();const e=document.createElement("div");e.id="loading-indicator",e.className="flex justify-start";const t=document.createElement("div");t.className="bg-fastn-surface border border-fastn-border rounded-2xl rounded-bl-md px-4 py-3 flex gap-1.5",t.innerHTML=`
     <span class="loading-dot h-2 w-2 rounded-full bg-fastn-muted"></span>
     <span class="loading-dot h-2 w-2 rounded-full bg-fastn-muted"></span>
     <span class="loading-dot h-2 w-2 rounded-full bg-fastn-muted"></span>
-  `,e.appendChild(t),x.appendChild(e),v()}function k(){var e;(e=document.getElementById("loading-indicator"))==null||e.remove()}function _(e,t){f.innerHTML="",f.classList.remove("hidden"),t?z(e):K(e),v()}function K(e){const t=document.createElement("div");t.className="flex flex-col gap-2";for(const s of e){const r=document.createElement("button");r.className="w-full border border-fastn-border bg-fastn-surface hover:border-fastn-accent/60 rounded-xl px-4 py-3 text-left transition-all group flex items-start gap-3",r.innerHTML=`
-      <span class="mt-0.5 shrink-0 h-[18px] w-[18px] rounded-full border-2 border-fastn-muted group-hover:border-fastn-accent flex items-center justify-center transition-colors">
+  `,e.appendChild(t),y.appendChild(e),v()}function S(){var e;(e=document.getElementById("loading-indicator"))==null||e.remove()}function J(e,t){m.innerHTML="",m.classList.remove("hidden"),t?Q(e):G(e),v()}function G(e){const t=document.createElement("div");t.className="flex flex-col gap-2";for(const s of e){const i=document.createElement("button");i.className="w-full border border-fastn-border bg-fastn-surface hover:border-fastn-accent/60 rounded-xl px-4 py-3 text-left transition-all group flex items-start gap-3",i.innerHTML=`
+      <span class="mt-0.5 shrink-0 h-[18px] w-[18px] rounded-full border-2 border-[#2E2E3A] group-hover:border-fastn-accent flex items-center justify-center transition-colors">
         <span class="h-0 w-0 rounded-full bg-fastn-accent group-hover:h-2 group-hover:w-2 transition-all"></span>
       </span>
       <span class="flex-1 min-w-0">
-        <span class="block text-[13px] font-medium text-white group-hover:text-fastn-accent transition-colors">${c(s.title)}</span>
-        ${s.description?`<span class="block text-xs leading-relaxed text-fastn-muted mt-0.5">${c(s.description)}</span>`:""}
+        <span class="block text-[13px] font-medium text-white group-hover:text-fastn-accent transition-colors">${p(s.title)}</span>
+        ${s.description?`<span class="block text-xs leading-relaxed text-fastn-muted mt-0.5">${p(s.description)}</span>`:""}
       </span>
-    `,r.addEventListener("click",()=>B(s.title)),t.appendChild(r)}f.appendChild(t)}function z(e){const t=new Set,s=document.createElement("div");s.className="flex flex-col gap-2";const r=document.createElement("div");r.className="flex flex-col gap-2";for(const n of e){const a=document.createElement("button");a.className="w-full border border-fastn-border bg-fastn-surface rounded-xl px-4 py-3 text-left transition-all flex items-start gap-3",a.innerHTML=`
-      <span class="check-box mt-0.5 shrink-0 h-[18px] w-[18px] rounded-md border-2 border-fastn-muted flex items-center justify-center transition-colors">
+    `,i.addEventListener("click",()=>H(s.title)),t.appendChild(i)}m.appendChild(t)}function Q(e){const t=new Set,s=document.createElement("div");s.className="flex flex-col gap-2";const i=document.createElement("div");i.className="flex flex-col gap-2";for(const n of e){const r=document.createElement("button");r.className="w-full border border-fastn-border bg-fastn-surface rounded-xl px-4 py-3 text-left transition-all flex items-start gap-3",r.innerHTML=`
+      <span class="check-box mt-0.5 shrink-0 h-[18px] w-[18px] rounded-md border-2 border-[#2E2E3A] flex items-center justify-center transition-colors">
         <svg class="check-svg h-3 w-3 text-white hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
           <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
         </svg>
       </span>
       <span class="flex-1 min-w-0">
-        <span class="block text-[13px] font-medium text-white">${c(n.title)}</span>
-        ${n.description?`<span class="block text-xs leading-relaxed text-fastn-muted mt-0.5">${c(n.description)}</span>`:""}
+        <span class="block text-[13px] font-medium text-white">${p(n.title)}</span>
+        ${n.description?`<span class="block text-xs leading-relaxed text-fastn-muted mt-0.5">${p(n.description)}</span>`:""}
       </span>
-    `,a.addEventListener("click",()=>{const l=a.querySelector(".check-box"),i=a.querySelector(".check-svg");t.has(n.title)?(t.delete(n.title),a.classList.remove("border-fastn-accent","bg-fastn-accent/5"),a.classList.add("border-fastn-border","bg-fastn-surface"),l.classList.remove("border-fastn-accent","bg-fastn-accent"),l.classList.add("border-fastn-muted"),i.classList.add("hidden")):(t.add(n.title),a.classList.add("border-fastn-accent","bg-fastn-accent/5"),a.classList.remove("border-fastn-border","bg-fastn-surface"),l.classList.add("border-fastn-accent","bg-fastn-accent"),l.classList.remove("border-fastn-muted"),i.classList.remove("hidden"))}),r.appendChild(a)}const o=document.createElement("button");o.className="bg-fastn-accent hover:bg-fastn-accent-hover text-white text-sm font-medium rounded-xl px-5 py-2.5 transition-colors mt-1 self-end",o.textContent="Confirm",o.addEventListener("click",()=>{t.size>0&&B(Array.from(t).join(", "))}),s.appendChild(r),s.appendChild(o),f.appendChild(s)}function T(){f.innerHTML="",f.classList.add("hidden")}function J(e){m.innerHTML="",m.classList.remove("hidden");const t=document.createElement("div");t.className="mb-3",t.innerHTML=`
-    <h3 class="text-sm font-semibold text-white">${c(e.name)}</h3>
-    <p class="text-xs text-fastn-muted mt-1">${c(e.description)}</p>
-  `,m.appendChild(t);const s=new Map(e.nodes.map(i=>[i.id,i])),r=new Map;for(const i of e.edges){const p=r.get(i.source)||[];p.push(i.target),r.set(i.source,p)}const o=new Set,n=[],a=[e.entry];for(;a.length>0;){const i=a.shift();if(o.has(i))continue;o.add(i);const p=s.get(i);p&&n.push(p);const u=r.get(i)||[];a.push(...u)}for(const i of e.nodes)o.has(i.id)||n.push(i);const l=document.createElement("div");l.className="space-y-0",n.forEach((i,p)=>{const u=document.createElement("div");u.className="flex items-start gap-3";const w=document.createElement("div");w.className="flex flex-col items-center shrink-0",w.innerHTML=`
+    `,r.addEventListener("click",()=>{const d=r.querySelector(".check-box"),a=r.querySelector(".check-svg");t.has(n.title)?(t.delete(n.title),r.classList.remove("border-fastn-accent","bg-fastn-accent/5"),r.classList.add("border-fastn-border","bg-fastn-surface"),d.classList.remove("border-fastn-accent","bg-fastn-accent"),d.classList.add("border-[#2E2E3A]"),a.classList.add("hidden")):(t.add(n.title),r.classList.add("border-fastn-accent","bg-fastn-accent/5"),r.classList.remove("border-fastn-border","bg-fastn-surface"),d.classList.add("border-fastn-accent","bg-fastn-accent"),d.classList.remove("border-[#2E2E3A]"),a.classList.remove("hidden"))}),i.appendChild(r)}const o=document.createElement("button");o.className="bg-fastn-accent hover:bg-fastn-accent-hover text-white text-sm font-medium rounded-xl px-5 py-2.5 transition-colors mt-1 self-end",o.textContent="Confirm",o.addEventListener("click",()=>{t.size>0&&H(Array.from(t).join(", "))}),s.appendChild(i),s.appendChild(o),m.appendChild(s)}function $(){m.innerHTML="",m.classList.add("hidden")}function V(e){h.innerHTML="",h.classList.remove("hidden");const t=document.createElement("div");t.className="mb-3",t.innerHTML=`
+    <h3 class="text-sm font-semibold text-white">${p(e.name)}</h3>
+    <p class="text-xs text-fastn-muted mt-1">${p(e.description)}</p>
+  `,h.appendChild(t);const s=new Map(e.nodes.map(a=>[a.id,a])),i=new Map;for(const a of e.edges){const l=i.get(a.source)||[];l.push(a.target),i.set(a.source,l)}const o=new Set,n=[],r=[e.entry];for(;r.length>0;){const a=r.shift();if(o.has(a))continue;o.add(a);const l=s.get(a);l&&n.push(l);const f=i.get(a)||[];r.push(...f)}for(const a of e.nodes)o.has(a.id)||n.push(a);const d=document.createElement("div");d.className="space-y-0",n.forEach((a,l)=>{const f=document.createElement("div");f.className="flex items-start gap-3";const E=document.createElement("div");E.className="flex flex-col items-center shrink-0",E.innerHTML=`
       <div class="h-6 w-6 rounded-full bg-fastn-accent/20 border border-fastn-accent/50 flex items-center justify-center">
-        <span class="text-[10px] font-bold text-fastn-accent">${p+1}</span>
+        <span class="text-[10px] font-bold text-fastn-accent">${l+1}</span>
       </div>
-      ${p<n.length-1?'<div class="w-px h-8 bg-fastn-border"></div>':""}
+      ${l<n.length-1?'<div class="w-px h-8 bg-fastn-border"></div>':""}
     `;const L=document.createElement("div");L.className="bg-fastn-surface border border-fastn-border rounded-lg px-3 py-2 mb-2 flex-1",L.innerHTML=`
-      <p class="text-xs font-medium text-white">${c(i.name)}</p>
-      ${i.description?`<p class="text-[11px] text-fastn-muted mt-0.5">${c(i.description)}</p>`:""}
-      <span class="inline-block mt-1 text-[10px] text-fastn-muted bg-fastn-bg rounded px-1.5 py-0.5">${c(i.type)}</span>
-    `,u.appendChild(w),u.appendChild(L),l.appendChild(u)}),m.appendChild(l),v()}async function y(e){if(!(!e.trim()||h)){T(),g("user",e),d.value="",I(),h=!0,S(!1),R();try{const t=await F(e);k(),g("assistant",t.text),t.options&&t.options.length>0&&_(t.options,t.multiSelect),t.plan&&J(t.plan)}catch(t){k(),g("assistant",`Error: ${t.message}`)}finally{h=!1,S(!0),d.focus()}}}async function B(e){T(),await y(e)}function S(e){d.disabled=!e,M.disabled=!e||!d.value.trim()}function I(){M.disabled=h||!d.value.trim()}d.addEventListener("input",I);P.addEventListener("submit",e=>{e.preventDefault(),y(d.value)});d.addEventListener("keydown",e=>{e.key==="Enter"&&!e.shiftKey&&(e.preventDefault(),y(d.value))});j.addEventListener("click",()=>window.close());const C=D();b?C?y(C):d.focus():g("assistant","No authentication provided. This popup should be opened via the `generate_flow` MCP tool which provides the OAuth token.");</script>
+      <p class="text-xs font-medium text-white">${p(a.name)}</p>
+      ${a.description?`<p class="text-[11px] text-fastn-muted mt-0.5">${p(a.description)}</p>`:""}
+      <span class="inline-block mt-1 text-[10px] text-fastn-muted bg-fastn-bg rounded px-1.5 py-0.5">${p(a.type)}</span>
+    `,f.appendChild(E),f.appendChild(L),d.appendChild(f)}),h.appendChild(d),v()}async function w(e){if(!(!e.trim()||g)){$(),x("user",e),u.value="",T(),g=!0,k(!1),K();try{const t=await q(e);S(),x("assistant",t.text),t.options&&t.options.length>0&&J(t.options,t.multiSelect),t.plan&&V(t.plan)}catch(t){S(),x("assistant",`Error: ${t.message}`)}finally{g=!1,k(!0),u.focus()}}}async function H(e){$(),await w(e)}function k(e){u.disabled=!e,I.disabled=!e||!u.value.trim()}function T(){I.disabled=g||!u.value.trim()}Y();u.addEventListener("input",T);U.addEventListener("submit",e=>{e.preventDefault(),w(u.value)});u.addEventListener("keydown",e=>{e.key==="Enter"&&!e.shiftKey&&(e.preventDefault(),w(u.value))});W.addEventListener("click",()=>window.close());const C=_();b?C?w(C):u.focus():x("assistant","No authentication provided. This popup should be opened via the `generate_flow` MCP tool which provides the OAuth token.");</script>
 </head>
 <body class="dark">
 
   <!-- Backdrop -->
-  <div class="backdrop-animate fixed inset-0 bg-black/70 flex items-center justify-center p-4">
+  <div class="backdrop-animate fixed inset-0 bg-black/70">
 
-    <!-- Popup Card -->
-    <div class="card-animate bg-fastn-bg border border-fastn-border rounded-2xl shadow-2xl flex flex-col w-full max-w-2xl h-[min(80vh,800px)] overflow-hidden">
+    <!-- Popup Card — positioned absolutely, JS sets left/top/width/height -->
+    <div id="popup-card" class="card-animate bg-fastn-bg border border-fastn-border rounded-2xl shadow-2xl flex flex-col overflow-hidden absolute">
 
-      <!-- Header -->
-      <header class="flex items-center justify-between px-4 py-3 border-b border-fastn-border shrink-0">
-        <div class="flex items-center gap-2">
+      <!-- Header / Drag Handle -->
+      <header id="drag-handle" class="flex items-center justify-between px-5 py-3 border-b border-fastn-border shrink-0 cursor-move select-none">
+        <div class="flex items-center gap-2 pointer-events-none">
           <svg class="h-5 w-5 text-fastn-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/>
           </svg>
@@ -97,7 +104,7 @@ ${s.description}`))),t||(typeof e=="string"?t=e:e!=null&&e.message?t=e.message:t
         </div>
         <button
           id="close-btn"
-          class="text-fastn-muted hover:text-white transition-colors p-1 rounded hover:bg-fastn-surface"
+          class="pointer-events-auto text-fastn-muted hover:text-white transition-colors p-1 rounded-lg hover:bg-fastn-surface"
           title="Close"
         >
           <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -107,7 +114,7 @@ ${s.description}`))),t||(typeof e=="string"?t=e:e!=null&&e.message?t=e.message:t
       </header>
 
       <!-- Chat Area -->
-      <main id="chat-area" class="flex-1 overflow-y-auto chat-scroll px-4 py-4 space-y-4">
+      <main id="chat-area" class="flex-1 overflow-y-auto chat-scroll px-5 py-4 space-y-4">
         <div id="empty-state" class="flex h-full items-center justify-center">
           <div class="text-center space-y-2">
             <p class="text-fastn-muted text-sm">Describe the automation you want to build</p>
@@ -116,20 +123,20 @@ ${s.description}`))),t||(typeof e=="string"?t=e:e!=null&&e.message?t=e.message:t
       </main>
 
       <!-- Options Area -->
-      <div id="options-area" class="hidden px-4 pb-3 shrink-0 max-h-[45vh] overflow-y-auto chat-scroll"></div>
+      <div id="options-area" class="hidden px-5 pb-3 shrink-0 max-h-[45vh] overflow-y-auto chat-scroll"></div>
 
       <!-- Flow Plan Area -->
-      <div id="plan-area" class="hidden px-4 pb-2 shrink-0 max-h-[40vh] overflow-y-auto chat-scroll"></div>
+      <div id="plan-area" class="hidden px-5 pb-2 shrink-0 max-h-[40vh] overflow-y-auto chat-scroll"></div>
 
       <!-- Input Area -->
-      <footer class="px-4 py-3 border-t border-fastn-border shrink-0 space-y-2">
+      <footer class="px-5 py-3 border-t border-fastn-border shrink-0 space-y-2">
         <form id="input-form" class="flex items-center gap-2">
           <input
             id="input-field"
             type="text"
             placeholder="Describe your flow..."
             autocomplete="off"
-            class="flex-1 bg-fastn-surface border border-fastn-border rounded-lg px-4 py-2.5 text-sm text-white placeholder-fastn-muted focus:outline-none focus:border-fastn-accent transition-colors"
+            class="flex-1 bg-fastn-surface border border-fastn-border rounded-lg px-4 py-2.5 text-sm text-white placeholder-fastn-muted focus:outline-none focus:border-fastn-accent focus:ring-1 focus:ring-fastn-accent/30 transition-colors"
           />
           <button
             id="send-btn"
@@ -144,9 +151,16 @@ ${s.description}`))),t||(typeof e=="string"?t=e:e!=null&&e.message?t=e.message:t
         </form>
         <div class="flex items-center justify-center gap-1.5">
           <span class="text-fastn-muted text-[10px]">Powered by</span>
-          <span class="text-fastn-accent text-[10px] font-semibold">Fastn Connect Kit</span>
+          <a href="https://fastn.ai" target="_blank" class="text-fastn-accent-light text-[10px] font-semibold hover:text-fastn-accent transition-colors">Fastn Connect Kit</a>
         </div>
       </footer>
+
+      <!-- Resize Handle -->
+      <div id="resize-handle" class="absolute bottom-1 right-1 w-5 h-5 cursor-nwse-resize flex items-center justify-center opacity-40 hover:opacity-80 transition-opacity" style="touch-action: none;">
+        <svg class="w-3 h-3 text-fastn-muted" viewBox="0 0 24 24" fill="currentColor">
+          <circle cx="20" cy="20" r="2"/><circle cx="14" cy="20" r="2"/><circle cx="20" cy="14" r="2"/>
+        </svg>
+      </div>
 
     </div>
   </div>
