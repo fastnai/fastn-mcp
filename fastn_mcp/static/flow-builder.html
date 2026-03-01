@@ -7,6 +7,21 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Theme init — runs before paint to avoid flash -->
+  <script>
+    (function(){
+      var p=new URLSearchParams(window.location.search),t=p.get("theme");
+      var s=localStorage.getItem("fastn-theme");
+      if(s) t=s;
+      if(t==="light"||(t!=="dark"&&window.matchMedia("(prefers-color-scheme: light)").matches)){
+        document.documentElement.classList.add("light");
+      }else{
+        document.documentElement.classList.add("dark");
+      }
+    })();
+  </script>
+
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -15,13 +30,18 @@
         extend: {
           colors: {
             fastn: {
-              bg: '#09090E',
-              surface: '#111118',
-              border: '#2E2E3A',
-              accent: '#4F3FFF',
-              'accent-hover': '#3B2DE8',
-              'accent-light': '#7B6FFF',
-              muted: '#B0B0C8',
+              bg:           'rgb(var(--fastn-bg) / <alpha-value>)',
+              surface:      'rgb(var(--fastn-surface) / <alpha-value>)',
+              'surface-sel':'rgb(var(--fastn-surface-sel) / <alpha-value>)',
+              border:       'rgb(var(--fastn-border) / <alpha-value>)',
+              'border-hi':  'rgb(var(--fastn-border-hi) / <alpha-value>)',
+              accent:       '#4F3FFF',
+              'accent-hover':'#3B2DE8',
+              heading:      'rgb(var(--fastn-heading) / <alpha-value>)',
+              body:         'rgb(var(--fastn-body) / <alpha-value>)',
+              muted:        'rgb(var(--fastn-muted) / <alpha-value>)',
+              check:        'rgb(var(--fastn-check) / <alpha-value>)',
+              icon:         'rgb(var(--fastn-icon) / <alpha-value>)',
             }
           }
         }
@@ -29,10 +49,37 @@
     }
   </script>
   <style>
+    /* ── Product UI — Dark Mode (Warm Dark) ── */
+    :root {
+      --fastn-bg:          26 25 24;    /* #1A1918 */
+      --fastn-surface:     34 33 32;    /* #222120 */
+      --fastn-surface-sel: 39 38 34;    /* #272622 */
+      --fastn-border:      43 42 39;    /* #2B2A27 */
+      --fastn-border-hi:   62 61 56;    /* #3E3D38 */
+      --fastn-heading:     227 225 218; /* #E3E1DA */
+      --fastn-body:        145 143 134; /* #918F86 */
+      --fastn-muted:       96 94 86;    /* #605E56 */
+      --fastn-check:       168 166 158; /* #A8A69E */
+      --fastn-icon:        128 126 117; /* #807E75 */
+    }
+    /* ── Product UI — Light Mode (Claude-inspired warm) ── */
+    :root.light {
+      --fastn-bg:          250 249 247; /* #FAF9F7 */
+      --fastn-surface:     255 255 255; /* #FFFFFF */
+      --fastn-surface-sel: 245 244 240; /* #F5F4F0 */
+      --fastn-border:      232 229 222; /* #E8E5DE */
+      --fastn-border-hi:   212 208 200; /* #D4D0C8 */
+      --fastn-heading:     26 24 22;    /* #1A1816 */
+      --fastn-body:        111 107 102; /* #6F6B66 */
+      --fastn-muted:       168 164 157; /* #A8A49D */
+      --fastn-check:       61 59 55;    /* #3D3B37 */
+      --fastn-icon:        138 134 128; /* #8A8680 */
+    }
+
     body { font-family: 'Inter', sans-serif; }
     .chat-scroll::-webkit-scrollbar { width: 6px; }
     .chat-scroll::-webkit-scrollbar-track { background: transparent; }
-    .chat-scroll::-webkit-scrollbar-thumb { background: #2E2E3A; border-radius: 3px; }
+    .chat-scroll::-webkit-scrollbar-thumb { background: rgb(var(--fastn-border-hi)); border-radius: 3px; }
     @keyframes pulse-dot {
       0%, 80%, 100% { opacity: 0.3; }
       40% { opacity: 1; }
@@ -47,49 +94,60 @@
     }
     .backdrop-animate { animation: fade-in 0.2s ease-out; }
     .card-animate { animation: slide-up 0.3s ease-out forwards; }
+    /* Theme toggle */
+    #toggle-knob { transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
+    :root.light #toggle-knob { transform: translateX(20px); }
+    #theme-toggle .icon-moon { display: block; }
+    #theme-toggle .icon-sun { display: none; }
+    :root.light #theme-toggle .icon-moon { display: none; }
+    :root.light #theme-toggle .icon-sun { display: block; }
+    /* Plan panel — slides open from right */
+    #plan-panel { width: 0; min-width: 0; opacity: 0; overflow: hidden; transition: width 0.3s ease, min-width 0.3s ease, opacity 0.2s ease; }
+    #plan-panel.plan-panel-open { width: 380px; min-width: 380px; opacity: 1; }
+    #popup-card { transition: width 0.3s ease, left 0.3s ease; }
   </style>
   <script type="module" crossorigin>(function(){const t=document.createElement("link").relList;if(t&&t.supports&&t.supports("modulepreload"))return;for(const o of document.querySelectorAll('link[rel="modulepreload"]'))i(o);new MutationObserver(o=>{for(const n of o)if(n.type==="childList")for(const r of n.addedNodes)r.tagName==="LINK"&&r.rel==="modulepreload"&&i(r)}).observe(document,{childList:!0,subtree:!0});function s(o){const n={};return o.integrity&&(n.integrity=o.integrity),o.referrerPolicy&&(n.referrerPolicy=o.referrerPolicy),o.crossOrigin==="use-credentials"?n.credentials="include":o.crossOrigin==="anonymous"?n.credentials="omit":n.credentials="same-origin",n}function i(o){if(o.ep)return;o.ep=!0;const n=s(o);fetch(o.href,n)}})();const A="https://live.fastn.ai/api/v1/flowBuilderAgent",P="b034812a-7d77-4e8e-945e-106656b2676e";let B=crypto.randomUUID(),b="",M="",g=!1;const c=document.getElementById("popup-card"),O=document.getElementById("drag-handle"),j=document.getElementById("resize-handle"),y=document.getElementById("chat-area"),D=document.getElementById("empty-state"),m=document.getElementById("options-area"),h=document.getElementById("plan-area"),U=document.getElementById("input-form"),u=document.getElementById("input-field"),I=document.getElementById("send-btn"),W=document.getElementById("close-btn"),F=400,X=320;function Y(){const e=Math.min(672,window.innerWidth-32),t=Math.min(800,window.innerHeight*.85);c.style.width=e+"px",c.style.height=t+"px",c.style.left=(window.innerWidth-e)/2+"px",c.style.top=(window.innerHeight-t)/2+"px"}O.addEventListener("mousedown",e=>{if(e.target.closest("button"))return;e.preventDefault();const t=e.clientX,s=e.clientY,i=c.offsetLeft,o=c.offsetTop;document.body.style.userSelect="none",c.style.transition="none";const n=d=>{let a=i+d.clientX-t,l=o+d.clientY-s;a=Math.max(-c.offsetWidth+48,Math.min(a,window.innerWidth-48)),l=Math.max(0,Math.min(l,window.innerHeight-48)),c.style.left=a+"px",c.style.top=l+"px"},r=()=>{document.removeEventListener("mousemove",n),document.removeEventListener("mouseup",r),document.body.style.userSelect="",c.style.transition=""};document.addEventListener("mousemove",n),document.addEventListener("mouseup",r)});j.addEventListener("mousedown",e=>{e.preventDefault(),e.stopPropagation();const t=e.clientX,s=e.clientY,i=c.offsetWidth,o=c.offsetHeight;document.body.style.userSelect="none",c.style.transition="none";const n=d=>{const a=Math.max(F,i+d.clientX-t),l=Math.max(X,o+d.clientY-s);c.style.width=a+"px",c.style.height=l+"px"},r=()=>{document.removeEventListener("mousemove",n),document.removeEventListener("mouseup",r),document.body.style.userSelect="",c.style.transition=""};document.addEventListener("mousemove",n),document.addEventListener("mouseup",r)});function _(){const e=new URLSearchParams(window.location.search);b=e.get("token")||"",M=e.get("project")||"";const t=e.get("prompt")||"",s=e.get("session");return s&&(B=s),t}async function q(e){const t={"Content-Type":"application/json","x-fastn-space-id":P,stage:"DRAFT","x-fastn-custom-auth":"true"};M&&(t["x-fastn-space-tenantid"]=M),b&&(t.authorization=`Bearer ${b}`);const s=await fetch(A,{method:"POST",headers:t,body:JSON.stringify({input:{chatInput:e,sessionID:B}})});if(!s.ok){const o=await s.text();throw new Error(`API error (${s.status}): ${o.slice(0,200)}`)}const i=await s.json();return R(i)}function R(e){let t="",s,i,o;const n=e==null?void 0:e.output;return n&&(n.message&&(t=n.message),n.signal==="ASK_USER"&&Array.isArray(n.options)&&n.options.length&&(i=n.options.map(r=>typeof r=="string"?{title:r}:{title:r.title,description:r.description}),o=n.multiSelect===!0?!0:void 0),n.plan&&(s=n.plan,t||(t=`**${s.name}**
 
-${s.description}`))),t||(typeof e=="string"?t=e:e!=null&&e.message?t=e.message:t=JSON.stringify(e,null,2)),{text:t,plan:s,options:i,multiSelect:o}}function N(){D.classList.add("hidden")}function v(){requestAnimationFrame(()=>{y.scrollTop=y.scrollHeight})}function p(e){const t=document.createElement("div");return t.textContent=e,t.innerHTML}function z(e){return p(e).replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/`(.+?)`/g,'<code class="bg-fastn-surface px-1 py-0.5 rounded text-xs">$1</code>').replace(/\n/g,"<br>")}function x(e,t){N();const s=document.createElement("div");s.className=`flex ${e==="user"?"justify-end":"justify-start"}`;const i=document.createElement("div");i.className=e==="user"?"bg-fastn-accent text-white rounded-2xl rounded-br-md px-4 py-2.5 max-w-[80%] text-sm break-words":"bg-fastn-surface border border-fastn-border text-[#B0B0C8] rounded-2xl rounded-bl-md px-4 py-2.5 max-w-[85%] text-sm leading-relaxed break-words",i.innerHTML=z(t),s.appendChild(i),y.appendChild(s),v()}function K(){N();const e=document.createElement("div");e.id="loading-indicator",e.className="flex justify-start";const t=document.createElement("div");t.className="bg-fastn-surface border border-fastn-border rounded-2xl rounded-bl-md px-4 py-3 flex gap-1.5",t.innerHTML=`
+${s.description}`))),t||(typeof e=="string"?t=e:e!=null&&e.message?t=e.message:t=JSON.stringify(e,null,2)),{text:t,plan:s,options:i,multiSelect:o}}function N(){D.classList.add("hidden")}function v(){requestAnimationFrame(()=>{y.scrollTop=y.scrollHeight})}function p(e){const t=document.createElement("div");return t.textContent=e,t.innerHTML}function z(e){return p(e).replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/`(.+?)`/g,'<code class="bg-fastn-border px-1 py-0.5 rounded text-xs">$1</code>').replace(/\n/g,"<br>")}function x(e,t){N();const s=document.createElement("div");s.className=`flex ${e==="user"?"justify-end":"justify-start"}`;const i=document.createElement("div");i.className=e==="user"?"bg-fastn-surface-sel border border-fastn-border-hi text-fastn-heading rounded-2xl rounded-br-md px-4 py-2.5 max-w-[80%] text-sm break-words":"bg-fastn-surface border border-fastn-border text-fastn-body rounded-2xl rounded-bl-md px-4 py-2.5 max-w-[85%] text-sm leading-relaxed break-words",i.innerHTML=z(t),s.appendChild(i),y.appendChild(s),v()}function K(){N();const e=document.createElement("div");e.id="loading-indicator",e.className="flex justify-start";const t=document.createElement("div");t.className="bg-fastn-surface border border-fastn-border rounded-2xl rounded-bl-md px-4 py-3 flex gap-1.5",t.innerHTML=`
     <span class="loading-dot h-2 w-2 rounded-full bg-fastn-muted"></span>
     <span class="loading-dot h-2 w-2 rounded-full bg-fastn-muted"></span>
     <span class="loading-dot h-2 w-2 rounded-full bg-fastn-muted"></span>
-  `,e.appendChild(t),y.appendChild(e),v()}function S(){var e;(e=document.getElementById("loading-indicator"))==null||e.remove()}function J(e,t){m.innerHTML="",m.classList.remove("hidden"),t?Q(e):G(e),v()}function G(e){const t=document.createElement("div");t.className="flex flex-col gap-2";for(const s of e){const i=document.createElement("button");i.className="w-full border border-fastn-border bg-fastn-surface hover:border-fastn-accent/60 rounded-xl px-4 py-3 text-left transition-all group flex items-start gap-3",i.innerHTML=`
-      <span class="mt-0.5 shrink-0 h-[18px] w-[18px] rounded-full border-2 border-[#2E2E3A] group-hover:border-fastn-accent flex items-center justify-center transition-colors">
-        <span class="h-0 w-0 rounded-full bg-fastn-accent group-hover:h-2 group-hover:w-2 transition-all"></span>
+  `,e.appendChild(t),y.appendChild(e),v()}function S(){var e;(e=document.getElementById("loading-indicator"))==null||e.remove()}function J(e,t){m.innerHTML="",m.classList.remove("hidden"),t?Q(e):G(e),v()}function G(e){const t=document.createElement("div");t.className="flex flex-col gap-2";for(const s of e){const i=document.createElement("button");i.className="w-full border border-fastn-border bg-fastn-surface hover:border-fastn-border-hi rounded-xl px-4 py-3 text-left transition-all group flex items-start gap-3",i.innerHTML=`
+      <span class="mt-0.5 shrink-0 h-[18px] w-[18px] rounded-full border-2 border-fastn-border-hi group-hover:border-fastn-check flex items-center justify-center transition-colors">
+        <span class="h-0 w-0 rounded-full bg-fastn-check group-hover:h-2 group-hover:w-2 transition-all"></span>
       </span>
       <span class="flex-1 min-w-0">
-        <span class="block text-[13px] font-medium text-white group-hover:text-fastn-accent transition-colors">${p(s.title)}</span>
+        <span class="block text-[13px] font-medium text-fastn-heading group-hover:text-fastn-heading transition-colors">${p(s.title)}</span>
         ${s.description?`<span class="block text-xs leading-relaxed text-fastn-muted mt-0.5">${p(s.description)}</span>`:""}
       </span>
     `,i.addEventListener("click",()=>H(s.title)),t.appendChild(i)}m.appendChild(t)}function Q(e){const t=new Set,s=document.createElement("div");s.className="flex flex-col gap-2";const i=document.createElement("div");i.className="flex flex-col gap-2";for(const n of e){const r=document.createElement("button");r.className="w-full border border-fastn-border bg-fastn-surface rounded-xl px-4 py-3 text-left transition-all flex items-start gap-3",r.innerHTML=`
-      <span class="check-box mt-0.5 shrink-0 h-[18px] w-[18px] rounded-md border-2 border-[#2E2E3A] flex items-center justify-center transition-colors">
+      <span class="check-box mt-0.5 shrink-0 h-[18px] w-[18px] rounded-md border-2 border-fastn-border-hi flex items-center justify-center transition-colors">
         <svg class="check-svg h-3 w-3 text-white hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
           <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
         </svg>
       </span>
       <span class="flex-1 min-w-0">
-        <span class="block text-[13px] font-medium text-white">${p(n.title)}</span>
+        <span class="block text-[13px] font-medium text-fastn-heading">${p(n.title)}</span>
         ${n.description?`<span class="block text-xs leading-relaxed text-fastn-muted mt-0.5">${p(n.description)}</span>`:""}
       </span>
-    `,r.addEventListener("click",()=>{const d=r.querySelector(".check-box"),a=r.querySelector(".check-svg");t.has(n.title)?(t.delete(n.title),r.classList.remove("border-fastn-accent","bg-fastn-accent/5"),r.classList.add("border-fastn-border","bg-fastn-surface"),d.classList.remove("border-fastn-accent","bg-fastn-accent"),d.classList.add("border-[#2E2E3A]"),a.classList.add("hidden")):(t.add(n.title),r.classList.add("border-fastn-accent","bg-fastn-accent/5"),r.classList.remove("border-fastn-border","bg-fastn-surface"),d.classList.add("border-fastn-accent","bg-fastn-accent"),d.classList.remove("border-[#2E2E3A]"),a.classList.remove("hidden"))}),i.appendChild(r)}const o=document.createElement("button");o.className="bg-fastn-accent hover:bg-fastn-accent-hover text-white text-sm font-medium rounded-xl px-5 py-2.5 transition-colors mt-1 self-end",o.textContent="Confirm",o.addEventListener("click",()=>{t.size>0&&H(Array.from(t).join(", "))}),s.appendChild(i),s.appendChild(o),m.appendChild(s)}function $(){m.innerHTML="",m.classList.add("hidden")}function V(e){h.innerHTML="",h.classList.remove("hidden");const t=document.createElement("div");t.className="mb-3",t.innerHTML=`
-    <h3 class="text-sm font-semibold text-white">${p(e.name)}</h3>
+    `,r.addEventListener("click",()=>{const d=r.querySelector(".check-box"),a=r.querySelector(".check-svg");t.has(n.title)?(t.delete(n.title),r.classList.remove("border-fastn-border-hi","bg-fastn-surface-sel"),r.classList.add("border-fastn-border","bg-fastn-surface"),d.classList.remove("border-fastn-check","bg-fastn-check"),d.classList.add("border-fastn-border-hi"),a.classList.add("hidden")):(t.add(n.title),r.classList.add("border-fastn-border-hi","bg-fastn-surface-sel"),r.classList.remove("border-fastn-border","bg-fastn-surface"),d.classList.add("border-fastn-check","bg-fastn-check"),d.classList.remove("border-fastn-border-hi"),a.classList.remove("hidden"))}),i.appendChild(r)}const o=document.createElement("button");o.className="bg-fastn-accent hover:bg-fastn-accent-hover text-white text-sm font-medium rounded-xl px-5 py-2.5 transition-colors mt-1 self-end",o.textContent="Confirm",o.addEventListener("click",()=>{t.size>0&&H(Array.from(t).join(", "))}),s.appendChild(i),s.appendChild(o),m.appendChild(s)}function $(){m.innerHTML="",m.classList.add("hidden"),h.innerHTML="";var pp=document.getElementById("plan-panel");if(pp.classList.contains("plan-panel-open")){pp.classList.remove("plan-panel-open");var nw=Math.min(672,window.innerWidth-32);c.style.width=nw+"px";c.style.left=(window.innerWidth-nw)/2+"px"}}function V(e){h.innerHTML="";var pp=document.getElementById("plan-panel");pp.classList.add("plan-panel-open");var nw=Math.min(1060,window.innerWidth-32);c.style.width=nw+"px";c.style.left=Math.max(16,(window.innerWidth-nw)/2)+"px";const t=document.createElement("div");t.className="mb-3",t.innerHTML=`
+    <h3 class="text-sm font-semibold text-fastn-heading">${p(e.name)}</h3>
     <p class="text-xs text-fastn-muted mt-1">${p(e.description)}</p>
   `,h.appendChild(t);const s=new Map(e.nodes.map(a=>[a.id,a])),i=new Map;for(const a of e.edges){const l=i.get(a.source)||[];l.push(a.target),i.set(a.source,l)}const o=new Set,n=[],r=[e.entry];for(;r.length>0;){const a=r.shift();if(o.has(a))continue;o.add(a);const l=s.get(a);l&&n.push(l);const f=i.get(a)||[];r.push(...f)}for(const a of e.nodes)o.has(a.id)||n.push(a);const d=document.createElement("div");d.className="space-y-0",n.forEach((a,l)=>{const f=document.createElement("div");f.className="flex items-start gap-3";const E=document.createElement("div");E.className="flex flex-col items-center shrink-0",E.innerHTML=`
-      <div class="h-6 w-6 rounded-full bg-fastn-accent/20 border border-fastn-accent/50 flex items-center justify-center">
-        <span class="text-[10px] font-bold text-fastn-accent">${l+1}</span>
+      <div class="h-6 w-6 rounded-full bg-fastn-border-hi/30 border border-fastn-border-hi flex items-center justify-center">
+        <span class="text-[10px] font-bold text-fastn-check">${l+1}</span>
       </div>
       ${l<n.length-1?'<div class="w-px h-8 bg-fastn-border"></div>':""}
     `;const L=document.createElement("div");L.className="bg-fastn-surface border border-fastn-border rounded-lg px-3 py-2 mb-2 flex-1",L.innerHTML=`
-      <p class="text-xs font-medium text-white">${p(a.name)}</p>
+      <p class="text-xs font-medium text-fastn-heading">${p(a.name)}</p>
       ${a.description?`<p class="text-[11px] text-fastn-muted mt-0.5">${p(a.description)}</p>`:""}
       <span class="inline-block mt-1 text-[10px] text-fastn-muted bg-fastn-bg rounded px-1.5 py-0.5">${p(a.type)}</span>
-    `,f.appendChild(E),f.appendChild(L),d.appendChild(f)}),h.appendChild(d),v()}async function w(e){if(!(!e.trim()||g)){$(),x("user",e),u.value="",T(),g=!0,k(!1),K();try{const t=await q(e);S(),x("assistant",t.text),t.options&&t.options.length>0&&J(t.options,t.multiSelect),t.plan&&V(t.plan)}catch(t){S(),x("assistant",`Error: ${t.message}`)}finally{g=!1,k(!0),u.focus()}}}async function H(e){$(),await w(e)}function k(e){u.disabled=!e,I.disabled=!e||!u.value.trim()}function T(){I.disabled=g||!u.value.trim()}Y();u.addEventListener("input",T);U.addEventListener("submit",e=>{e.preventDefault(),w(u.value)});u.addEventListener("keydown",e=>{e.key==="Enter"&&!e.shiftKey&&(e.preventDefault(),w(u.value))});W.addEventListener("click",()=>window.close());const C=_();b?C?w(C):u.focus():x("assistant","No authentication provided. This popup should be opened via the `generate_flow` MCP tool which provides the OAuth token.");</script>
+    `,f.appendChild(E),f.appendChild(L),d.appendChild(f)}),h.appendChild(d),v()}async function w(e){if(!(!e.trim()||g)){$(),x("user",e),u.value="",T(),g=!0,k(!1),K();try{const t=await q(e);S(),x("assistant",t.text),t.options&&t.options.length>0&&J(t.options,t.multiSelect),t.plan&&V(t.plan)}catch(t){S(),x("assistant",`Error: ${t.message}`)}finally{g=!1,k(!0),u.focus()}}}async function H(e){$(),await w(e)}function k(e){u.disabled=!e,I.disabled=!e||!u.value.trim()}function T(){I.disabled=g||!u.value.trim()}Y();u.addEventListener("input",T);U.addEventListener("submit",e=>{e.preventDefault(),w(u.value)});u.addEventListener("keydown",e=>{e.key==="Enter"&&!e.shiftKey&&(e.preventDefault(),w(u.value))});W.addEventListener("click",()=>window.close());window.matchMedia("(prefers-color-scheme: light)").addEventListener("change",e=>{const t=new URLSearchParams(window.location.search);if(!t.get("theme")&&!localStorage.getItem("fastn-theme")){document.documentElement.classList.toggle("light",e.matches),document.documentElement.classList.toggle("dark",!e.matches)}});const C=_();b?C?w(C):u.focus():x("assistant","No authentication provided. This popup should be opened via the `generate_flow` MCP tool which provides the OAuth token.");</script>
 </head>
-<body class="dark">
+<body>
 
-  <!-- Backdrop -->
-  <div class="backdrop-animate fixed inset-0 bg-black/70">
+  <!-- Backdrop — lighter overlay in light mode, heavier in dark -->
+  <div class="backdrop-animate fixed inset-0 bg-black/40 dark:bg-black/70">
 
     <!-- Popup Card — positioned absolutely, JS sets left/top/width/height -->
     <div id="popup-card" class="card-animate bg-fastn-bg border border-fastn-border rounded-2xl shadow-2xl flex flex-col overflow-hidden absolute">
@@ -97,63 +155,85 @@ ${s.description}`))),t||(typeof e=="string"?t=e:e!=null&&e.message?t=e.message:t
       <!-- Header / Drag Handle -->
       <header id="drag-handle" class="flex items-center justify-between px-5 py-3 border-b border-fastn-border shrink-0 cursor-move select-none">
         <div class="flex items-center gap-2 pointer-events-none">
-          <svg class="h-5 w-5 text-fastn-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <svg class="h-5 w-5 text-fastn-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/>
           </svg>
-          <span class="text-white font-semibold text-sm">Flow Builder</span>
+          <span class="text-fastn-heading font-semibold text-sm">Flow Builder</span>
         </div>
-        <button
-          id="close-btn"
-          class="pointer-events-auto text-fastn-muted hover:text-white transition-colors p-1 rounded-lg hover:bg-fastn-surface"
-          title="Close"
-        >
-          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
-          </svg>
-        </button>
-      </header>
-
-      <!-- Chat Area -->
-      <main id="chat-area" class="flex-1 overflow-y-auto chat-scroll px-5 py-4 space-y-4">
-        <div id="empty-state" class="flex h-full items-center justify-center">
-          <div class="text-center space-y-2">
-            <p class="text-fastn-muted text-sm">Describe the automation you want to build</p>
-          </div>
-        </div>
-      </main>
-
-      <!-- Options Area -->
-      <div id="options-area" class="hidden px-5 pb-3 shrink-0 max-h-[45vh] overflow-y-auto chat-scroll"></div>
-
-      <!-- Flow Plan Area -->
-      <div id="plan-area" class="hidden px-5 pb-2 shrink-0 max-h-[40vh] overflow-y-auto chat-scroll"></div>
-
-      <!-- Input Area -->
-      <footer class="px-5 py-3 border-t border-fastn-border shrink-0 space-y-2">
-        <form id="input-form" class="flex items-center gap-2">
-          <input
-            id="input-field"
-            type="text"
-            placeholder="Describe your flow..."
-            autocomplete="off"
-            class="flex-1 bg-fastn-surface border border-fastn-border rounded-lg px-4 py-2.5 text-sm text-white placeholder-fastn-muted focus:outline-none focus:border-fastn-accent focus:ring-1 focus:ring-fastn-accent/30 transition-colors"
-          />
+        <div class="flex items-center gap-1.5 pointer-events-auto">
+          <!-- Theme Toggle -->
+          <button id="theme-toggle" class="relative w-11 h-6 rounded-full bg-fastn-surface border border-fastn-border hover:border-fastn-border-hi transition-colors" title="Toggle theme">
+            <span id="toggle-knob" class="absolute top-[2px] left-[2px] h-5 w-5 rounded-full bg-fastn-heading shadow-sm flex items-center justify-center">
+              <svg class="icon-moon h-3 w-3 text-fastn-bg" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/>
+              </svg>
+              <svg class="icon-sun h-3 w-3 text-fastn-bg" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"/>
+              </svg>
+            </span>
+          </button>
+          <!-- Close -->
           <button
-            id="send-btn"
-            type="submit"
-            class="bg-fastn-accent hover:bg-fastn-accent-hover text-white rounded-lg p-2.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            disabled
+            id="close-btn"
+            class="text-fastn-muted hover:text-fastn-heading transition-colors p-1 rounded-lg hover:bg-fastn-surface"
+            title="Close"
           >
             <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"/>
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
             </svg>
           </button>
-        </form>
-        <div class="flex items-center justify-center gap-1.5">
-          <span class="text-fastn-muted text-[10px]">Powered by</span>
-          <a href="https://fastn.ai" target="_blank" class="text-fastn-accent-light text-[10px] font-semibold hover:text-fastn-accent transition-colors">Fastn Connect Kit</a>
         </div>
-      </footer>
+      </header>
+
+      <!-- Content: horizontal split -->
+      <div class="flex flex-1 min-h-0 overflow-hidden">
+        <!-- Left: Chat + Options + Input -->
+        <div class="flex flex-col flex-1 min-w-0">
+          <main id="chat-area" class="flex-1 overflow-y-auto chat-scroll px-5 py-4 space-y-4">
+            <div id="empty-state" class="flex h-full items-center justify-center">
+              <div class="text-center space-y-2">
+                <p class="text-fastn-muted text-sm">Describe the automation you want to build</p>
+              </div>
+            </div>
+          </main>
+          <div id="options-area" class="hidden px-5 pb-3 shrink-0 max-h-[45vh] overflow-y-auto chat-scroll"></div>
+          <footer class="px-5 py-3 border-t border-fastn-border shrink-0 space-y-2">
+            <form id="input-form" class="flex items-center gap-2">
+              <input
+                id="input-field"
+                type="text"
+                placeholder="Describe your flow..."
+                autocomplete="off"
+                class="flex-1 bg-fastn-surface border border-fastn-border rounded-lg px-4 py-2.5 text-sm text-fastn-heading placeholder-fastn-muted focus:outline-none focus:border-fastn-border-hi focus:ring-1 focus:ring-fastn-border-hi/30 transition-colors"
+              />
+              <button
+                id="send-btn"
+                type="submit"
+                class="bg-fastn-accent hover:bg-fastn-accent-hover text-white rounded-lg p-2.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                disabled
+              >
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"/>
+                </svg>
+              </button>
+            </form>
+            <div class="flex items-center justify-center gap-1.5">
+              <span class="text-fastn-muted text-[10px]">Powered by</span>
+              <a href="https://fastn.ai" target="_blank" class="text-fastn-icon text-[10px] font-semibold hover:text-fastn-heading transition-colors">Fastn Connect Kit</a>
+            </div>
+          </footer>
+        </div>
+        <!-- Right: Plan Panel -->
+        <div id="plan-panel" class="flex flex-col border-l border-fastn-border bg-fastn-bg">
+          <div class="flex items-center px-4 py-3 border-b border-fastn-border shrink-0">
+            <svg class="h-4 w-4 text-fastn-icon mr-2 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
+            </svg>
+            <span class="text-fastn-heading font-semibold text-sm whitespace-nowrap">Flow Plan</span>
+          </div>
+          <div id="plan-area" class="flex-1 overflow-y-auto chat-scroll px-4 py-3"></div>
+        </div>
+      </div>
 
       <!-- Resize Handle -->
       <div id="resize-handle" class="absolute bottom-1 right-1 w-5 h-5 cursor-nwse-resize flex items-center justify-center opacity-40 hover:opacity-80 transition-opacity" style="touch-action: none;">
@@ -165,5 +245,15 @@ ${s.description}`))),t||(typeof e=="string"?t=e:e!=null&&e.message?t=e.message:t
     </div>
   </div>
 
+  <!-- Theme toggle handler -->
+  <script>
+    document.getElementById("theme-toggle").addEventListener("click",function(e){
+      e.stopPropagation();
+      var h=document.documentElement,isL=h.classList.contains("light");
+      h.classList.toggle("light",!isL);
+      h.classList.toggle("dark",isL);
+      localStorage.setItem("fastn-theme",isL?"dark":"light");
+    });
+  </script>
 </body>
 </html>
