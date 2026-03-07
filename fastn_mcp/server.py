@@ -734,6 +734,10 @@ TOOLS = [
                     "items": {"type": "string"},
                     "description": "Narrow results to connector domains (e.g. ['payments', 'crm', 'messaging', 'database', 'email', 'project-management'])",
                 },
+                "project_id": {
+                    "type": "string",
+                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
+                },
             },
             "required": ["prompt"],
         },
@@ -760,6 +764,10 @@ TOOLS = [
                     "type": "string",
                     "description": "Connection ID when a connector has multiple connections (optional)",
                 },
+                "project_id": {
+                    "type": "string",
+                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
+                },
             },
             "required": ["action_id", "parameters"],
         },
@@ -779,6 +787,10 @@ TOOLS = [
                     "type": "string",
                     "description": "Filter by connector name (e.g. 'slack', 'jira')",
                 },
+                "project_id": {
+                    "type": "string",
+                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
+                },
             },
         },
     ),
@@ -794,7 +806,12 @@ TOOLS = [
         ),
         inputSchema={
             "type": "object",
-            "properties": {},
+            "properties": {
+                "project_id": {
+                    "type": "string",
+                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
+                },
+            },
         },
     ),
     Tool(
@@ -810,6 +827,10 @@ TOOLS = [
                 "skill_name": {
                     "type": "string",
                     "description": "The name of the skill to activate (from list_skills).",
+                },
+                "project_id": {
+                    "type": "string",
+                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
                 },
             },
             "required": ["skill_name"],
@@ -852,6 +873,10 @@ TOOLS = [
                     "type": "string",
                     "description": "Optional deployment comment",
                 },
+                "project_id": {
+                    "type": "string",
+                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
+                },
             },
             "required": ["flow_id"],
         },
@@ -875,6 +900,10 @@ TOOLS = [
                     "type": "string",
                     "description": 'Filter by status: "active", "paused", "error". Omit for all.',
                 },
+                "project_id": {
+                    "type": "string",
+                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
+                },
             },
         },
     ),
@@ -890,6 +919,10 @@ TOOLS = [
                 "flow_id": {
                     "type": "string",
                     "description": "The flow_id from list_flows",
+                },
+                "project_id": {
+                    "type": "string",
+                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
                 },
             },
             "required": ["flow_id"],
@@ -912,6 +945,10 @@ TOOLS = [
                     "type": "object",
                     "description": "Optional input parameters for the flow",
                 },
+                "project_id": {
+                    "type": "string",
+                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
+                },
             },
             "required": ["flow_id"],
         },
@@ -925,6 +962,10 @@ TOOLS = [
                 "flow_id": {
                     "type": "string",
                     "description": "The flow_id from list_flows",
+                },
+                "project_id": {
+                    "type": "string",
+                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
                 },
             },
             "required": ["flow_id"],
@@ -944,6 +985,10 @@ TOOLS = [
                     "type": "string",
                     "description": "What the user wants to automate, e.g. 'Send a Slack message when a Jira ticket is created'",
                 },
+                "project_id": {
+                    "type": "string",
+                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
+                },
             },
             "required": ["prompt"],
         },
@@ -961,6 +1006,10 @@ TOOLS = [
                 "prompt": {
                     "type": "string",
                     "description": "Plain English description of what to change",
+                },
+                "project_id": {
+                    "type": "string",
+                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
                 },
             },
             "required": ["flow_id"],
@@ -1008,6 +1057,10 @@ TOOLS = [
                         "from the 'sub' claim in the userinfo response."
                     ),
                 },
+                "project_id": {
+                    "type": "string",
+                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
+                },
             },
             "required": ["auth_url", "user_token"],
         },
@@ -1023,6 +1076,10 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "styles": _THEME_SCHEMA,
+                "project_id": {
+                    "type": "string",
+                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
+                },
             },
             "required": ["styles"],
         },
@@ -1828,7 +1885,11 @@ def create_starlette_app(
             RevocationOptions,
         )
 
-        provider = FastnOAuthProvider(server_url=server_url)
+        clients_file = os.path.join(
+            os.environ.get("FASTN_DATA_DIR", os.path.expanduser("~/.fastn-mcp")),
+            "oauth_clients.json",
+        )
+        provider = FastnOAuthProvider(server_url=server_url, clients_file=clients_file)
         _oauth_provider = provider
 
         token_verifier = ProviderTokenVerifier(provider)

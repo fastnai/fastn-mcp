@@ -35,8 +35,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import logging
 import os
+import pathlib
 import secrets
 import time
 from dataclasses import dataclass
@@ -359,40 +361,67 @@ class FastnOAuthProvider:
 
     Implements ``OAuthAuthorizationServerProvider`` so the MCP SDK handles
     all the HTTP endpoints (/authorize, /token, /register, /revoke, metadata).
-    This class only implements the business logic.
 
-    All state is in-memory.  When the server restarts, clients re-authenticate
-    (which is fine — they just redo the OAuth dance).
+    Keycloak tokens are used directly as MCP tokens — no secondary token store.
+    The MCP access_token IS the Keycloak JWT; the MCP refresh_token IS the
+    Keycloak refresh token.  Validation is stateless (JWKS for JWTs, direct
+    Keycloak exchange for refreshes).
+
+    Only state kept:
+    - _clients:       registered MCP clients (required by MCP spec)
+    - _pending_auths: in-flight OAuth dance state (keyed by Keycloak state param)
+    - _auth_codes:    short-lived codes → Keycloak token pairs (5-min lifetime)
     """
 
-    def __init__(self, server_url: str = "http://localhost:8000") -> None:
+    def __init__(
+        self,
+        server_url: str = "http://localhost:8000",
+        clients_file: str | None = None,
+    ) -> None:
         self.server_url = server_url.rstrip("/")
-
-        # In-memory stores
+        self._clients_file = pathlib.Path(clients_file) if clients_file else None
         self._clients: Dict[str, OAuthClientInformationFull] = {}
-        self._pending_auths: Dict[str, _PendingAuth] = {}  # keyed by state
+        self._pending_auths: Dict[str, _PendingAuth] = {}
         self._auth_codes: Dict[str, AuthorizationCode] = {}
-        self._access_tokens: Dict[str, AccessToken] = {}
-        self._refresh_tokens: Dict[str, RefreshToken] = {}
-        # MCP token → Keycloak access token
-        self._keycloak_tokens: Dict[str, str] = {}
-        # Direct Keycloak JWT validator (for Bearer token mode)
+        self._auth_code_kc_tokens: Dict[str, TokenResponse] = {}  # code → Keycloak tokens
         self._kc_jwt_validator = _KeycloakJWTValidator()
-        # Refresh token exchange state (for Bearer token mode with opaque refresh tokens)
-        self._refresh_token_state: Dict[str, str] = {}  # bearer_key -> latest keycloak refresh token
-        self._failed_refresh_tokens: Dict[str, float] = {}  # token -> failure timestamp (negative cache)
-        self._refresh_client_ids: Dict[str, str] = {}  # bearer_key -> azp (client that issued the token)
-        # Rate limiting for client registration (global, not per-client)
         self._register_attempts: list[float] = []
+        self._load_clients()
+
+    # -- client persistence ----------------------------------------------------
+
+    def _load_clients(self) -> None:
+        """Load registered clients from disk (if clients_file is set)."""
+        if not self._clients_file or not self._clients_file.exists():
+            return
+        try:
+            data = json.loads(self._clients_file.read_text())
+            for client_data in data.values():
+                client = OAuthClientInformationFull.model_validate(client_data)
+                self._clients[client.client_id] = client
+            logger.info("Loaded %d OAuth clients from %s", len(self._clients), self._clients_file)
+        except Exception as exc:
+            logger.warning("Failed to load clients from %s: %s", self._clients_file, exc)
+
+    def _save_clients(self) -> None:
+        """Persist registered clients to disk (if clients_file is set)."""
+        if not self._clients_file:
+            return
+        try:
+            self._clients_file.parent.mkdir(parents=True, exist_ok=True)
+            data = {cid: c.model_dump(mode="json") for cid, c in self._clients.items()}
+            self._clients_file.write_text(json.dumps(data, indent=2))
+        except Exception as exc:
+            logger.warning("Failed to save clients to %s: %s", self._clients_file, exc)
 
     # -- helpers ---------------------------------------------------------------
 
     def get_keycloak_token(self, mcp_token: str) -> str | None:
-        """Look up the Keycloak access token for a given MCP token."""
-        return self._keycloak_tokens.get(mcp_token)
+        """The MCP token IS the Keycloak token — return as-is."""
+        return mcp_token
 
     def cleanup_expired(self) -> int:
-        """Remove expired tokens, auth codes, and stale pending auths.
+        """Remove expired auth codes and stale pending auths.
 
         Returns the total number of entries removed. Call periodically
         (e.g. every 5 minutes) to bound memory usage.
@@ -400,43 +429,18 @@ class FastnOAuthProvider:
         now = time.time()
         removed = 0
 
-        # Expired access tokens
-        for token_str in list(self._access_tokens):
-            at = self._access_tokens[token_str]
-            if at.expires_at and now > at.expires_at:
-                self._access_tokens.pop(token_str, None)
-                self._keycloak_tokens.pop(token_str, None)
-                self._refresh_token_state.pop(token_str, None)
-                self._refresh_client_ids.pop(token_str, None)
-                removed += 1
-
-        # Expired refresh tokens
-        for token_str in list(self._refresh_tokens):
-            rt = self._refresh_tokens[token_str]
-            if rt.expires_at and now > rt.expires_at:
-                self._refresh_tokens.pop(token_str, None)
-                removed += 1
-
-        # Expired auth codes
+        # Expired auth codes (5-min lifetime)
         for code_str in list(self._auth_codes):
-            ac = self._auth_codes[code_str]
-            if now > ac.expires_at:
+            if now > self._auth_codes[code_str].expires_at:
                 self._auth_codes.pop(code_str, None)
-                self._keycloak_tokens.pop(f"code:{code_str}", None)
+                self._auth_code_kc_tokens.pop(code_str, None)
                 removed += 1
 
-        # Stale pending auths — no timestamp available, so trim when > 100
+        # Stale pending auths — no timestamp available, trim when > 100
         if len(self._pending_auths) > 100:
-            # Remove oldest half (dict preserves insertion order in Python 3.7+)
             keys = list(self._pending_auths.keys())
             for k in keys[: len(keys) // 2]:
                 self._pending_auths.pop(k, None)
-                removed += 1
-
-        # Stale failed-refresh negative cache (older than 5 minutes)
-        for token_str in list(self._failed_refresh_tokens):
-            if now - self._failed_refresh_tokens[token_str] > 300:
-                self._failed_refresh_tokens.pop(token_str, None)
                 removed += 1
 
         # Stale rate-limit entries
@@ -515,6 +519,7 @@ class FastnOAuthProvider:
             client_info.scope = SUPPORTED_SCOPES
 
         self._clients[client_info.client_id] = client_info
+        self._save_clients()
         logger.info(
             "Registered MCP client: id=%s, name=%s, redirect_uris=%s, scope=%s",
             client_id,
@@ -608,8 +613,8 @@ class FastnOAuthProvider:
             resource=pending.resource,
         )
 
-        # Store the Keycloak token — we'll map it to the MCP token later
-        self._keycloak_tokens[f"code:{our_code}"] = kc_tokens.access_token
+        # Store Keycloak tokens alongside the auth code — returned directly in exchange_authorization_code
+        self._auth_code_kc_tokens[our_code] = kc_tokens
 
         # Redirect to the MCP client's redirect_uri with our code
         return construct_redirect_uri(
@@ -640,46 +645,18 @@ class FastnOAuthProvider:
         client: OAuthClientInformationFull,
         authorization_code: AuthorizationCode,
     ) -> OAuthToken:
-        """Exchange our auth code for MCP tokens."""
-        # Remove the code (single use)
+        """Return Keycloak tokens directly as MCP tokens — no secondary token generated."""
         self._auth_codes.pop(authorization_code.code, None)
-
-        now = int(time.time())
-
-        # Generate MCP tokens
-        access_token_str = _generate_token()
-        refresh_token_str = _generate_token()
-
-        # Store access token
-        self._access_tokens[access_token_str] = AccessToken(
-            token=access_token_str,
-            client_id=client.client_id,
-            scopes=authorization_code.scopes,
-            expires_at=now + ACCESS_TOKEN_LIFETIME,
-            resource=authorization_code.resource,
-        )
-
-        # Store refresh token
-        self._refresh_tokens[refresh_token_str] = RefreshToken(
-            token=refresh_token_str,
-            client_id=client.client_id,
-            scopes=authorization_code.scopes,
-            expires_at=now + REFRESH_TOKEN_LIFETIME,
-        )
-
-        # Map MCP access token → Keycloak token
-        kc_token = self._keycloak_tokens.pop(
-            f"code:{authorization_code.code}", None
-        )
-        if kc_token:
-            self._keycloak_tokens[access_token_str] = kc_token
+        kc_tokens = self._auth_code_kc_tokens.pop(authorization_code.code, None)
+        if kc_tokens is None:
+            raise ValueError("Keycloak tokens not found for auth code")
 
         return OAuthToken(
-            access_token=access_token_str,
+            access_token=kc_tokens.access_token,
             token_type="Bearer",
-            expires_in=ACCESS_TOKEN_LIFETIME,
+            expires_in=kc_tokens.expires_in,
             scope=" ".join(authorization_code.scopes) if authorization_code.scopes else None,
-            refresh_token=refresh_token_str,
+            refresh_token=kc_tokens.refresh_token,
         )
 
     async def load_refresh_token(
@@ -687,17 +664,16 @@ class FastnOAuthProvider:
         client: OAuthClientInformationFull,
         refresh_token: str,
     ) -> RefreshToken | None:
-        rt = self._refresh_tokens.get(refresh_token)
-        if rt is None:
-            return None
-        # Check expiry
-        if rt.expires_at and time.time() > rt.expires_at:
-            self._refresh_tokens.pop(refresh_token, None)
-            return None
-        # Check client
-        if rt.client_id != client.client_id:
-            return None
-        return rt
+        """The refresh token IS the Keycloak refresh token — wrap without state lookup.
+
+        Keycloak validates it when exchange_refresh_token calls the token endpoint.
+        """
+        return RefreshToken(
+            token=refresh_token,
+            client_id=client.client_id,
+            scopes=[],
+            expires_at=int(time.time()) + REFRESH_TOKEN_LIFETIME,
+        )
 
     async def exchange_refresh_token(
         self,
@@ -705,215 +681,66 @@ class FastnOAuthProvider:
         refresh_token: RefreshToken,
         scopes: list[str],
     ) -> OAuthToken:
-        """Rotate tokens — issue new access + refresh tokens."""
-        # Remove old tokens
-        old_access = None
-        for token_str, at in list(self._access_tokens.items()):
-            if at.client_id == client.client_id:
-                old_access = token_str
+        """Exchange Keycloak refresh token directly — returns fresh Keycloak tokens."""
+        kc_response = None
+        for kc_client_id in (KEYCLOAK_CLIENT_ID, KEYCLOAK_SDK_CLIENT_ID):
+            try:
+                kc_response = await refresh_tokens(refresh_token.token, client_id=kc_client_id)
                 break
+            except httpx.HTTPStatusError:
+                continue
+            except Exception as exc:
+                logger.warning("Refresh token exchange error: %s", exc)
+                raise
 
-        self._refresh_tokens.pop(refresh_token.token, None)
+        if kc_response is None:
+            raise ValueError("Refresh token rejected by Keycloak")
 
-        now = int(time.time())
         new_scopes = scopes if scopes else refresh_token.scopes
-
-        # Generate new tokens
-        new_access_str = _generate_token()
-        new_refresh_str = _generate_token()
-
-        self._access_tokens[new_access_str] = AccessToken(
-            token=new_access_str,
-            client_id=client.client_id,
-            scopes=new_scopes,
-            expires_at=now + ACCESS_TOKEN_LIFETIME,
-        )
-
-        self._refresh_tokens[new_refresh_str] = RefreshToken(
-            token=new_refresh_str,
-            client_id=client.client_id,
-            scopes=new_scopes,
-            expires_at=now + REFRESH_TOKEN_LIFETIME,
-        )
-
-        # Migrate Keycloak token mapping
-        if old_access:
-            kc_token = self._keycloak_tokens.pop(old_access, None)
-            if kc_token:
-                self._keycloak_tokens[new_access_str] = kc_token
-            self._access_tokens.pop(old_access, None)
-
         return OAuthToken(
-            access_token=new_access_str,
+            access_token=kc_response.access_token,
             token_type="Bearer",
-            expires_in=ACCESS_TOKEN_LIFETIME,
+            expires_in=kc_response.expires_in,
             scope=" ".join(new_scopes) if new_scopes else None,
-            refresh_token=new_refresh_str,
+            refresh_token=kc_response.refresh_token,
         )
-
-    async def _try_refresh_token_exchange(
-        self, bearer_key: str, refresh_token_value: str,
-        client_id: str = KEYCLOAK_CLIENT_ID,
-    ) -> AccessToken | None:
-        """Try to exchange a Keycloak refresh token for an access token.
-
-        Args:
-            bearer_key: The original token string the client sends as Bearer.
-                        Used as the key in _access_tokens and _keycloak_tokens.
-            refresh_token_value: The actual Keycloak refresh token to send
-                                 to the token endpoint.  On first call this
-                                 equals bearer_key; on re-refreshes it's the
-                                 rotated refresh token from Keycloak.
-            client_id: Keycloak client_id to use for the exchange.  Refresh
-                       tokens are bound to their issuing client — must match.
-
-        Returns:
-            AccessToken if the exchange succeeded, None otherwise.
-        """
-        try:
-            token_response = await refresh_tokens(refresh_token_value, client_id=client_id)
-        except httpx.HTTPStatusError:
-            logger.debug("Refresh token exchange failed for bearer key %.8s...", bearer_key)
-            return None
-        except (httpx.RequestError, Exception) as exc:
-            logger.warning("Refresh token exchange error: %s", exc)
-            return None
-
-        # Validate the fresh access token JWT
-        claims = await asyncio.to_thread(
-            self._kc_jwt_validator.validate, token_response.access_token
-        )
-        if claims is None:
-            logger.warning("Could not validate access token from refresh exchange")
-            return None
-
-        access_token = AccessToken(
-            token=bearer_key,
-            client_id=claims.get("azp", claims.get("sub", "keycloak-direct")),
-            scopes=claims.get("scope", "").split() if claims.get("scope") else [],
-            expires_at=int(claims["exp"]) if claims.get("exp") else int(time.time()) + token_response.expires_in,
-        )
-
-        # Cache keyed by the original bearer token
-        self._access_tokens[bearer_key] = access_token
-        # Map to the FRESH access token for SDK calls
-        self._keycloak_tokens[bearer_key] = token_response.access_token
-        # Store the NEW refresh token (Keycloak may rotate refresh tokens)
-        self._refresh_token_state[bearer_key] = token_response.refresh_token
-        # Remember which client issued the token (azp from JWT) for re-refreshes
-        self._refresh_client_ids[bearer_key] = claims.get("azp", client_id)
-
-        logger.debug(
-            "Refresh exchange OK: bearer_key=%.8s..., fresh_access=%.8s..., client_id=%s, expires_at=%s",
-            bearer_key, token_response.access_token, claims.get("azp", client_id), access_token.expires_at,
-        )
-
-        return access_token
 
     async def load_access_token(self, token: str) -> AccessToken | None:
-        """Validate an access token.  Called on every request.
+        """Validate an access token. Called on every request.
 
-        Three paths:
-        1. Cached token — fast dict lookup (MCP OAuth + cached JWT/refresh results)
-        2. Direct Keycloak JWT — JWKS signature validation (Bearer token mode)
-        3. Keycloak refresh token — exchange for access token via token endpoint
+        Two paths — both stateless:
+        1. Keycloak JWT — JWKS signature + expiry validation
+        2. Fastn API key — hex string accepted provisionally (backend validates)
         """
         logger.debug("load_access_token: token=%.8s..., len=%d", token, len(token))
 
-        # Path 1: Cached token (in-memory dict lookup — fast path)
-        at = self._access_tokens.get(token)
-        if at is not None:
-            if at.expires_at and time.time() > at.expires_at:
-                # Token expired — check if this was a refresh-token-based session
-                if token in self._refresh_token_state:
-                    remembered_client = self._refresh_client_ids.get(token, KEYCLOAK_CLIENT_ID)
-                    refreshed = await self._try_refresh_token_exchange(
-                        token, self._refresh_token_state[token],
-                        client_id=remembered_client,
-                    )
-                    if refreshed is not None:
-                        return refreshed
-                    # Refresh failed — clean up entirely
-                    self._refresh_token_state.pop(token, None)
-                    self._refresh_client_ids.pop(token, None)
-                self._access_tokens.pop(token, None)
-                self._keycloak_tokens.pop(token, None)
-                logger.debug("load_access_token: Path 1 expired, refresh failed — token removed")
-                return None
-            logger.debug("load_access_token: Path 1 cache hit, client_id=%s", at.client_id)
-            return at
-
-        # Path 2: Try as direct Keycloak JWT (JWKS signature validation)
+        # Path 1: Keycloak JWT (JWKS validation — stateless)
         claims = await asyncio.to_thread(self._kc_jwt_validator.validate, token)
         if claims is not None:
-            access_token = AccessToken(
+            logger.debug("load_access_token: Path 1 JWT valid, azp=%s", claims.get("azp"))
+            return AccessToken(
                 token=token,
                 client_id=claims.get("azp", claims.get("sub", "keycloak-direct")),
                 scopes=claims.get("scope", "").split() if claims.get("scope") else [],
                 expires_at=int(claims["exp"]) if claims.get("exp") else int(time.time()) + ACCESS_TOKEN_LIFETIME,
             )
-            # Cache so subsequent requests with same token skip JWT decode
-            self._access_tokens[token] = access_token
-            # Identity mapping — the Keycloak JWT IS the token for SDK calls
-            self._keycloak_tokens[token] = token
-            logger.debug("load_access_token: Path 2 JWT valid, azp=%s", claims.get("azp"))
-            return access_token
 
-        # Path 2.5: Fastn API key — hex string, not a JWT (no dots)
+        # Path 2: Fastn API key — hex string, not a JWT (no dots)
         # Accept provisionally; the Fastn backend validates when the SDK calls it.
         if "." not in token and all(c in "0123456789abcdef" for c in token.lower()):
-            access_token = AccessToken(
+            logger.debug("load_access_token: Path 2 API key accepted, token=%.8s...", token)
+            return AccessToken(
                 token=token,
                 client_id="api-key",
                 scopes=["read", "write"],
                 expires_at=int(time.time()) + ACCESS_TOKEN_LIFETIME,
             )
-            self._access_tokens[token] = access_token
-            # Identity mapping — _resolve_auth_token reads from _keycloak_tokens
-            self._keycloak_tokens[token] = token
-            logger.debug("load_access_token: Path 2.5 API key accepted, token=%.8s...", token)
-            return access_token
 
-        # Path 3: Try as Keycloak refresh token (opaque string → exchange for access token)
-        # Refresh tokens are bound to their issuing client — try fastn-oauth, then fastn-sdk.
-        # After the first success, azp from the JWT is stored for future re-refreshes.
-        failed_at = self._failed_refresh_tokens.get(token)
-        if failed_at and time.time() - failed_at < 60:
-            return None  # Negative cache — don't retry failed tokens within 60s
-
-        refreshed = await self._try_refresh_token_exchange(
-            token, token, client_id=KEYCLOAK_CLIENT_ID,
-        )
-        if refreshed is None:
-            refreshed = await self._try_refresh_token_exchange(
-                token, token, client_id=KEYCLOAK_SDK_CLIENT_ID,
-            )
-        if refreshed is None:
-            self._failed_refresh_tokens[token] = time.time()
-            logger.debug("load_access_token: Path 3 refresh failed for token=%.8s...", token)
-        else:
-            logger.debug("load_access_token: Path 3 refresh succeeded for token=%.8s...", token)
-        return refreshed
+        logger.debug("load_access_token: rejected, token=%.8s...", token)
+        return None
 
     async def revoke_token(
         self, token: AccessToken | RefreshToken
     ) -> None:
-        """Revoke an access or refresh token."""
-        if isinstance(token, AccessToken):
-            self._access_tokens.pop(token.token, None)
-            self._keycloak_tokens.pop(token.token, None)
-            self._refresh_token_state.pop(token.token, None)
-            self._refresh_client_ids.pop(token.token, None)
-            # Also revoke associated refresh tokens
-            for rt_str, rt in list(self._refresh_tokens.items()):
-                if rt.client_id == token.client_id:
-                    self._refresh_tokens.pop(rt_str, None)
-        elif isinstance(token, RefreshToken):
-            self._refresh_tokens.pop(token.token, None)
-            # Also revoke associated access tokens
-            for at_str, at in list(self._access_tokens.items()):
-                if at.client_id == token.client_id:
-                    self._access_tokens.pop(at_str, None)
-                    self._keycloak_tokens.pop(at_str, None)
-                    self._refresh_token_state.pop(at_str, None)
-                    self._refresh_client_ids.pop(at_str, None)
+        """No local state to revoke — tokens live in Keycloak."""
+        pass
