@@ -1,5 +1,5 @@
 # ── Build stage ────────────────────────────────────────────────────────
-FROM python:3.12-slim AS builder
+FROM python:3.13-slim AS builder
 
 WORKDIR /fastn-mcp
 
@@ -11,18 +11,15 @@ COPY pyproject.toml .
 COPY README.md .
 COPY fastn_mcp/ fastn_mcp/
 
-# Build wheel
-RUN pip wheel --no-cache-dir --wheel-dir /wheels .
-RUN pip wheel --no-cache-dir --wheel-dir /wheels \
-    "mcp[cli]>=1.2.0" \
-    "fastn-ai>=0.3.0" \
-    "httpx>=0.28.1" \
-    "starlette>=0.27.0" \
-    "uvicorn>=0.24.0" \
-    "PyJWT[crypto]>=2.8.0"
+# Install all dependencies directly into site-packages
+RUN pip install --no-cache-dir \
+    "mcp>=1.2.0" \
+    "fastn-ai>=0.3.7" \
+    . && \
+    pip uninstall -y pip
 
 # ── Runtime stage ─────────────────────────────────────────────────────
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 LABEL maintainer="Fastn <support@fastn.ai>"
 LABEL description="Fastn MCP Server — MCP gateway for 250+ enterprise integrations"
@@ -34,9 +31,9 @@ RUN groupadd --gid 1000 fastn && \
 
 WORKDIR /app
 
-# Install wheels from build stage
-COPY --from=builder /wheels /wheels
-RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
+# Copy installed packages from build stage
+COPY --from=builder /usr/local/lib/python3.13 /usr/local/lib/python3.13
+COPY --from=builder /usr/local/bin/fastn-mcp-docker /usr/local/bin/fastn-mcp-docker
 
 # Environment defaults
 ENV FASTN_MCP_HOST=0.0.0.0 \
@@ -46,18 +43,6 @@ ENV FASTN_MCP_HOST=0.0.0.0 \
 
 EXPOSE 8000
 
-# Health check — hit the OAuth metadata endpoint (always available)
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${FASTN_MCP_PORT}/.well-known/oauth-protected-resource')" || exit 1
-
-
-
-# Entrypoint script handles env-to-CLI flag translation
-COPY --chown=fastn:fastn docker-entrypoint.sh /app/docker-entrypoint.sh
-RUN chmod +x /app/docker-entrypoint.sh
-RUN ls /app
-
-# Switch to non-root user
 USER fastn
 
-ENTRYPOINT ["/app/docker-entrypoint.sh"]
+ENTRYPOINT ["fastn-mcp-docker"]
