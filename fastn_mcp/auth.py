@@ -94,6 +94,8 @@ ALLOWED_REDIRECT_DOMAINS: set[str] = {
     "replit.com",
     "cursor.sh",
     "windsurf.ai",
+    # AI assistants
+    "claude.ai",
     # Fastn own domains
     "app.fastn.ai",
     "mcp.live.fastn.ai",
