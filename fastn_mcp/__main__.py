@@ -2,10 +2,8 @@
 
 Usage:
     python -m fastn_mcp --sse --shttp --port 8000       # SSE + Streamable HTTP
-    python -m fastn_mcp --stdio                          # stdio (Claude Desktop)
-    python -m fastn_mcp --stdio --mode tools              # Fastn tools only
     python -m fastn_mcp --sse --port 8000 --no-auth      # no OAuth (testing)
-    python -m fastn_mcp --sse --server-url https://...   # explicit public URL
+    python -m fastn_mcp --server-url https://...          # explicit public URL
 
 Endpoints (mode via URL path):
     POST /shttp                                all tools
@@ -30,12 +28,6 @@ def cli():
     )
 
     # Transport flags
-    parser.add_argument(
-        "--stdio",
-        action="store_true",
-        default=False,
-        help="Use stdio transport (for local pipe-based clients like Claude Desktop)",
-    )
     parser.add_argument(
         "--sse",
         action="store_true",
@@ -73,30 +65,6 @@ def cli():
         help="Public URL of this server (for OAuth metadata, env: FASTN_MCP_SERVER_URL)",
     )
     parser.add_argument(
-        "--mode",
-        choices=["agent", "tools"],
-        default="agent",
-        help='Tool mode for stdio: "agent" (all tools) or "tools" '
-             '(Fastn tools only). HTTP transports use URL path '
-             '(/shttp/tools, /sse/tools).',
-    )
-    parser.add_argument(
-        "--project",
-        default=None,
-        metavar="PROJECT_ID",
-        help="Pre-configure the project ID for stdio transport. "
-             "For HTTP transports, include project in URL path "
-             "(/shttp/tools/{project_id}).",
-    )
-    parser.add_argument(
-        "--skill",
-        default=None,
-        metavar="SKILL_ID",
-        help="Pre-configure the skill ID for stdio transport. "
-             "For HTTP transports, include skill in URL path "
-             "(/shttp/tools/{project_id}/{skill_id}).",
-    )
-    parser.add_argument(
         "-v", "--verbose",
         action="store_true",
         default=os.environ.get("FASTN_MCP_VERBOSE", "").lower() in ("true", "1", "yes"),
@@ -105,9 +73,7 @@ def cli():
     args = parser.parse_args()
 
     # Resolve transport mode
-    if args.stdio:
-        transport = "stdio"
-    elif args.sse and not args.shttp:
+    if args.sse and not args.shttp:
         transport = "sse-only"
     elif args.shttp and not args.sse:
         transport = "shttp-only"
@@ -143,9 +109,6 @@ def cli():
         port=args.port,
         auth_enabled=not args.no_auth,
         server_url=args.server_url,
-        mode=args.mode,
-        project_id=args.project,
-        skill_id=args.skill,
     ))
 
 

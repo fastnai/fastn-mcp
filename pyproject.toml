@@ -14,16 +14,13 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries",
 ]
 
 dependencies = [
-    "mcp[cli]>=1.2.0",
-    "fastn-ai>=0.3.0",
-    "httpx>=0.28.1",
-    "starlette>=0.27.0",
-    "uvicorn>=0.24.0",
-    "PyJWT[crypto]>=2.8.0",
+    "mcp>=1.2.0",
+    "fastn-ai>=0.3.7",
 ]
 
 [project.optional-dependencies]
@@ -42,6 +39,7 @@ Issues = "https://github.com/fastnai/fastn-mcp/issues"
 
 [project.scripts]
 fastn-mcp = "fastn_mcp.__main__:cli"
+fastn-mcp-docker = "fastn_mcp.__entrypoint__:main"
 
 [build-system]
 requires = ["hatchling"]
