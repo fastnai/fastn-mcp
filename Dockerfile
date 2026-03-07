@@ -14,7 +14,7 @@ COPY fastn_mcp/ fastn_mcp/
 # Install all dependencies directly into site-packages
 RUN pip install --no-cache-dir \
     "mcp>=1.2.0" \
-    "fastn-ai>=0.3.6" \
+    "fastn-ai>=0.3.7" \
     . && \
     pip uninstall -y pip
 
