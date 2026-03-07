@@ -9,8 +9,8 @@ Two concerns live here:
 2. **FastnOAuthProvider** — implements the MCP SDK's
    ``OAuthAuthorizationServerProvider`` protocol so that MCP clients
    (Lovable, MCP Inspector, etc.) can authenticate via the standard
-   MCP OAuth flow.  This provider proxies to Fastn's Keycloak for the
-   actual authentication then issues its own opaque tokens.
+   MCP OAuth flow.  This provider proxies to Fastn's Keycloak and
+   returns Keycloak tokens directly to the client — no opaque mapping.
 
 Flow (MCP OAuth ↔ Keycloak):
 
@@ -20,14 +20,20 @@ Flow (MCP OAuth ↔ Keycloak):
                           builds Keycloak URL ──▶ /auth
     2.                    /callback?code=KC ◀── redirect
                           exchange KC code   ──▶ /token
-                          store tokens
+                          store KC tokens temporarily
                           redirect client
        ◀── redirect with MCP code
     3. POST /token ──────▶ exchange_authorization_code()
-                          return MCP access_token
-       ◀── {access_token}
-    4. Bearer <token> ──▶ load_access_token()
-                          validate, return AccessToken
+                          return KC access_token + refresh_token
+       ◀── {access_token, refresh_token}
+    4. Bearer <kc_jwt> ──▶ load_access_token()
+                           validate via JWKS (stateless)
+    5. POST /token ──────▶ exchange_refresh_token()
+       (refresh_token)     proxy to Keycloak /token
+       ◀── {new access_token, new refresh_token}
+
+Token lifetime is controlled entirely by Keycloak realm/client settings.
+Set Access Token Lifespan on the fastn-oauth client in Keycloak admin.
 """
 
 from __future__ import annotations
@@ -56,6 +62,7 @@ from mcp.server.auth.provider import (
     OAuthAuthorizationServerProvider,
     OAuthToken,
     RefreshToken,
+    TokenError,
     construct_redirect_uri,
 )
 from mcp.shared.auth import OAuthClientInformationFull
@@ -113,8 +120,8 @@ REGISTER_RATE_LIMIT = 10  # max registrations
 REGISTER_RATE_WINDOW = 60  # seconds
 
 # Token lifetimes
-ACCESS_TOKEN_LIFETIME = 3600  # 1 hour
-REFRESH_TOKEN_LIFETIME = 86400  # 24 hours
+ACCESS_TOKEN_LIFETIME = 86400 * 7   # 7 days — MCP clients rarely use refresh tokens
+REFRESH_TOKEN_LIFETIME = 86400 * 30  # 30 days
 AUTH_CODE_LIFETIME = 300  # 5 minutes
 
 
@@ -195,6 +202,7 @@ class TokenResponse:
     access_token: str
     refresh_token: str
     expires_in: int
+    refresh_expires_in: int = 86400 * 7  # fallback if Keycloak doesn't send it
     token_type: str = "Bearer"
 
 
@@ -257,6 +265,7 @@ async def exchange_code_for_tokens(
         access_token=data["access_token"],
         refresh_token=data["refresh_token"],
         expires_in=data.get("expires_in", 300),
+        refresh_expires_in=data.get("refresh_expires_in", 86400 * 7),
         token_type=data.get("token_type", "Bearer"),
     )
 
@@ -279,6 +288,7 @@ async def refresh_tokens(refresh_token: str, client_id: str = KEYCLOAK_CLIENT_ID
         access_token=data["access_token"],
         refresh_token=data["refresh_token"],
         expires_in=data.get("expires_in", 300),
+        refresh_expires_in=data.get("refresh_expires_in", 86400 * 7),
         token_type=data.get("token_type", "Bearer"),
     )
 
@@ -370,9 +380,10 @@ class FastnOAuthProvider:
         self._clients: Dict[str, OAuthClientInformationFull] = {}
         self._pending_auths: Dict[str, _PendingAuth] = {}  # keyed by state
         self._auth_codes: Dict[str, AuthorizationCode] = {}
+        # JWT validation cache: token → AccessToken (evicted on expiry)
         self._access_tokens: Dict[str, AccessToken] = {}
-        self._refresh_tokens: Dict[str, RefreshToken] = {}
-        # MCP token → Keycloak access token
+        # Temporary KC token storage during the OAuth dance (code: / code_ttl: / code_kc_refresh:)
+        # and identity mapping for KC JWTs (token → token)
         self._keycloak_tokens: Dict[str, str] = {}
         # Direct Keycloak JWT validator (for Bearer token mode)
         self._kc_jwt_validator = _KeycloakJWTValidator()
@@ -386,8 +397,19 @@ class FastnOAuthProvider:
     # -- helpers ---------------------------------------------------------------
 
     def get_keycloak_token(self, mcp_token: str) -> str | None:
-        """Look up the Keycloak access token for a given MCP token."""
-        return self._keycloak_tokens.get(mcp_token)
+        """Return the Keycloak access token for a given MCP token.
+
+        Since we now issue Keycloak tokens directly as MCP tokens, this is
+        mostly an identity function — the MCP token IS the KC token.
+        The dict lookup handles legacy opaque tokens and API keys.
+        """
+        cached = self._keycloak_tokens.get(mcp_token)
+        if cached is not None:
+            return cached
+        # KC JWT passed directly: token IS the KC access token
+        if "." in mcp_token:
+            return mcp_token
+        return None
 
     def cleanup_expired(self) -> int:
         """Remove expired tokens, auth codes, and stale pending auths.
@@ -398,7 +420,7 @@ class FastnOAuthProvider:
         now = time.time()
         removed = 0
 
-        # Expired access tokens
+        # Expired cached JWT access tokens (Path 2 cache in load_access_token)
         for token_str in list(self._access_tokens):
             at = self._access_tokens[token_str]
             if at.expires_at and now > at.expires_at:
@@ -408,19 +430,14 @@ class FastnOAuthProvider:
                 self._refresh_client_ids.pop(token_str, None)
                 removed += 1
 
-        # Expired refresh tokens
-        for token_str in list(self._refresh_tokens):
-            rt = self._refresh_tokens[token_str]
-            if rt.expires_at and now > rt.expires_at:
-                self._refresh_tokens.pop(token_str, None)
-                removed += 1
-
         # Expired auth codes
         for code_str in list(self._auth_codes):
             ac = self._auth_codes[code_str]
             if now > ac.expires_at:
                 self._auth_codes.pop(code_str, None)
                 self._keycloak_tokens.pop(f"code:{code_str}", None)
+                self._keycloak_tokens.pop(f"code_ttl:{code_str}", None)
+                self._keycloak_tokens.pop(f"code_kc_refresh:{code_str}", None)
                 removed += 1
 
         # Stale pending auths — no timestamp available, so trim when > 100
@@ -606,8 +623,10 @@ class FastnOAuthProvider:
             resource=pending.resource,
         )
 
-        # Store the Keycloak token — we'll map it to the MCP token later
+        # Temporarily store KC tokens until exchange_authorization_code retrieves them
         self._keycloak_tokens[f"code:{our_code}"] = kc_tokens.access_token
+        self._keycloak_tokens[f"code_ttl:{our_code}"] = str(kc_tokens.expires_in)
+        self._keycloak_tokens[f"code_kc_refresh:{our_code}"] = kc_tokens.refresh_token
 
         # Redirect to the MCP client's redirect_uri with our code
         return construct_redirect_uri(
@@ -638,46 +657,28 @@ class FastnOAuthProvider:
         client: OAuthClientInformationFull,
         authorization_code: AuthorizationCode,
     ) -> OAuthToken:
-        """Exchange our auth code for MCP tokens."""
-        # Remove the code (single use)
+        """Exchange our auth code for MCP tokens.
+
+        Returns Keycloak tokens directly — no opaque MCP token mapping needed.
+        The client stores and manages the KC access + refresh tokens.
+        load_access_token validates KC JWTs via JWKS (stateless).
+        exchange_refresh_token proxies to Keycloak (stateless).
+        """
         self._auth_codes.pop(authorization_code.code, None)
 
-        now = int(time.time())
+        kc_token = self._keycloak_tokens.pop(f"code:{authorization_code.code}", None)
+        kc_refresh = self._keycloak_tokens.pop(f"code_kc_refresh:{authorization_code.code}", None)
+        kc_expires_in = int(self._keycloak_tokens.pop(f"code_ttl:{authorization_code.code}", None) or ACCESS_TOKEN_LIFETIME)
 
-        # Generate MCP tokens
-        access_token_str = _generate_token()
-        refresh_token_str = _generate_token()
-
-        # Store access token
-        self._access_tokens[access_token_str] = AccessToken(
-            token=access_token_str,
-            client_id=client.client_id,
-            scopes=authorization_code.scopes,
-            expires_at=now + ACCESS_TOKEN_LIFETIME,
-            resource=authorization_code.resource,
-        )
-
-        # Store refresh token
-        self._refresh_tokens[refresh_token_str] = RefreshToken(
-            token=refresh_token_str,
-            client_id=client.client_id,
-            scopes=authorization_code.scopes,
-            expires_at=now + REFRESH_TOKEN_LIFETIME,
-        )
-
-        # Map MCP access token → Keycloak token
-        kc_token = self._keycloak_tokens.pop(
-            f"code:{authorization_code.code}", None
-        )
-        if kc_token:
-            self._keycloak_tokens[access_token_str] = kc_token
+        if not kc_token or not kc_refresh:
+            raise TokenError(error="invalid_grant", error_description="Authorization code not found or already used")
 
         return OAuthToken(
-            access_token=access_token_str,
+            access_token=kc_token,
             token_type="Bearer",
-            expires_in=ACCESS_TOKEN_LIFETIME,
+            expires_in=kc_expires_in,
             scope=" ".join(authorization_code.scopes) if authorization_code.scopes else None,
-            refresh_token=refresh_token_str,
+            refresh_token=kc_refresh,
         )
 
     async def load_refresh_token(
@@ -685,17 +686,17 @@ class FastnOAuthProvider:
         client: OAuthClientInformationFull,
         refresh_token: str,
     ) -> RefreshToken | None:
-        rt = self._refresh_tokens.get(refresh_token)
-        if rt is None:
+        # Accept any non-empty opaque string as a potential Keycloak refresh token.
+        # exchange_refresh_token will validate it by calling Keycloak — no server
+        # state needed here.
+        if not refresh_token:
             return None
-        # Check expiry
-        if rt.expires_at and time.time() > rt.expires_at:
-            self._refresh_tokens.pop(refresh_token, None)
-            return None
-        # Check client
-        if rt.client_id != client.client_id:
-            return None
-        return rt
+        return RefreshToken(
+            token=refresh_token,
+            client_id=client.client_id,
+            scopes=[],
+            expires_at=int(time.time()) + REFRESH_TOKEN_LIFETIME,
+        )
 
     async def exchange_refresh_token(
         self,
@@ -703,50 +704,24 @@ class FastnOAuthProvider:
         refresh_token: RefreshToken,
         scopes: list[str],
     ) -> OAuthToken:
-        """Rotate tokens — issue new access + refresh tokens."""
-        # Remove old tokens
-        old_access = None
-        for token_str, at in list(self._access_tokens.items()):
-            if at.client_id == client.client_id:
-                old_access = token_str
+        """Proxy the refresh token exchange directly to Keycloak — no server state."""
+        kc_tokens = None
+        for client_id in (KEYCLOAK_CLIENT_ID, KEYCLOAK_SDK_CLIENT_ID):
+            try:
+                kc_tokens = await refresh_tokens(refresh_token.token, client_id=client_id)
                 break
+            except httpx.HTTPStatusError:
+                continue
 
-        self._refresh_tokens.pop(refresh_token.token, None)
-
-        now = int(time.time())
-        new_scopes = scopes if scopes else refresh_token.scopes
-
-        # Generate new tokens
-        new_access_str = _generate_token()
-        new_refresh_str = _generate_token()
-
-        self._access_tokens[new_access_str] = AccessToken(
-            token=new_access_str,
-            client_id=client.client_id,
-            scopes=new_scopes,
-            expires_at=now + ACCESS_TOKEN_LIFETIME,
-        )
-
-        self._refresh_tokens[new_refresh_str] = RefreshToken(
-            token=new_refresh_str,
-            client_id=client.client_id,
-            scopes=new_scopes,
-            expires_at=now + REFRESH_TOKEN_LIFETIME,
-        )
-
-        # Migrate Keycloak token mapping
-        if old_access:
-            kc_token = self._keycloak_tokens.pop(old_access, None)
-            if kc_token:
-                self._keycloak_tokens[new_access_str] = kc_token
-            self._access_tokens.pop(old_access, None)
+        if kc_tokens is None:
+            raise TokenError(error="invalid_grant", error_description="Invalid or expired refresh token")
 
         return OAuthToken(
-            access_token=new_access_str,
+            access_token=kc_tokens.access_token,
             token_type="Bearer",
-            expires_in=ACCESS_TOKEN_LIFETIME,
-            scope=" ".join(new_scopes) if new_scopes else None,
-            refresh_token=new_refresh_str,
+            expires_in=kc_tokens.expires_in,
+            scope=" ".join(scopes) if scopes else None,
+            refresh_token=kc_tokens.refresh_token,
         )
 
     async def _try_refresh_token_exchange(
@@ -896,22 +871,13 @@ class FastnOAuthProvider:
     async def revoke_token(
         self, token: AccessToken | RefreshToken
     ) -> None:
-        """Revoke an access or refresh token."""
-        if isinstance(token, AccessToken):
-            self._access_tokens.pop(token.token, None)
-            self._keycloak_tokens.pop(token.token, None)
-            self._refresh_token_state.pop(token.token, None)
-            self._refresh_client_ids.pop(token.token, None)
-            # Also revoke associated refresh tokens
-            for rt_str, rt in list(self._refresh_tokens.items()):
-                if rt.client_id == token.client_id:
-                    self._refresh_tokens.pop(rt_str, None)
-        elif isinstance(token, RefreshToken):
-            self._refresh_tokens.pop(token.token, None)
-            # Also revoke associated access tokens
-            for at_str, at in list(self._access_tokens.items()):
-                if at.client_id == token.client_id:
-                    self._access_tokens.pop(at_str, None)
-                    self._keycloak_tokens.pop(at_str, None)
-                    self._refresh_token_state.pop(at_str, None)
-                    self._refresh_client_ids.pop(at_str, None)
+        """Revoke an access or refresh token.
+
+        KC JWTs are stateless — we can only evict our local cache.
+        The token remains valid at Keycloak until it expires naturally.
+        """
+        # Evict from JWT cache (populated by load_access_token Path 2)
+        self._access_tokens.pop(token.token, None)
+        self._keycloak_tokens.pop(token.token, None)
+        self._refresh_token_state.pop(token.token, None)
+        self._refresh_client_ids.pop(token.token, None)
