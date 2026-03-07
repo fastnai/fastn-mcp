@@ -1112,6 +1112,12 @@ async def _list_skills_auto_project() -> list[dict]:
     x-project-id header. Returns [] silently when no project is set rather
     than guessing, which would break when a user adds a second project.
     """
+    project_id = (
+        _resolve_request_headers().get("project_id")
+        or _request_project_id.get()
+    )
+    if not project_id:
+        return []
     try:
         async with _sdk_client({}) as client:
             return await client.skills.list()
@@ -1123,8 +1129,8 @@ async def handle_list_prompts() -> list[Prompt]:
     """Return static prompts + dynamic skill catalog (agentskills.io Tier 1).
 
     Skills are fetched live on every list_prompts call. Project is resolved
-    from the URL path (/shttp/tools/{project_id}), x-project-id header, or
-    auto-detected when the user has exactly one project.
+    from the URL path (/shttp/tools/{project_id}) or x-project-id header.
+    Returns only static prompts when no project is set.
     """
     prompts: list[Prompt] = list(PROMPTS)
 
