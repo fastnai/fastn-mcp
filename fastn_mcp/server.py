@@ -31,7 +31,7 @@ from typing import Any, Dict, Optional
 
 import anyio
 from mcp.server import Server
-from mcp.types import GetPromptResult, Prompt, PromptArgument, PromptMessage, TextContent, Tool
+from mcp.types import CallToolResult, GetPromptResult, Prompt, PromptArgument, PromptMessage, TextContent, Tool
 
 from fastn import (
     AsyncFastnClient,
@@ -700,6 +700,11 @@ _THEME_SCHEMA: dict = {
     },
 }
 
+_PROJECT_ID_PROP = {
+    "type": "string",
+    "description": "Fastn project ID (workspace). Must be a real ID returned by list_projects — never guess or fabricate.",
+}
+
 TOOLS = [
     # =====================================================================
     # TOOLS — Discovery and execution
@@ -717,6 +722,7 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
+                "project_id": _PROJECT_ID_PROP,
                 "prompt": {
                     "type": "string",
                     "description": "Describe what you need, including context about what you are building (e.g. 'send a Slack notification when a new order is placed' rather than just 'slack'). Richer prompts return more relevant tools.",
@@ -734,12 +740,9 @@ TOOLS = [
                     "items": {"type": "string"},
                     "description": "Narrow results to connector domains (e.g. ['payments', 'crm', 'messaging', 'database', 'email', 'project-management'])",
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
-                },
+                "project_id": _PROJECT_ID_PROP,
             },
-            "required": ["prompt"],
+            "required": ["project_id", "prompt"],
         },
     ),
     Tool(
@@ -752,6 +755,7 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
+                "project_id": _PROJECT_ID_PROP,
                 "action_id": {
                     "type": "string",
                     "description": "The actionId returned by find_tools",
@@ -764,12 +768,9 @@ TOOLS = [
                     "type": "string",
                     "description": "Connection ID when a connector has multiple connections (optional)",
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
-                },
+                "project_id": _PROJECT_ID_PROP,
             },
-            "required": ["action_id", "parameters"],
+            "required": ["project_id", "action_id", "parameters"],
         },
     ),
     Tool(
@@ -783,15 +784,14 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
+                "project_id": _PROJECT_ID_PROP,
                 "query": {
                     "type": "string",
                     "description": "Filter by connector name (e.g. 'slack', 'jira')",
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
-                },
+                "project_id": _PROJECT_ID_PROP,
             },
+            "required": ["project_id"],
         },
     ),
     # =====================================================================
@@ -807,11 +807,9 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "project_id": {
-                    "type": "string",
-                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
-                },
+                "project_id": _PROJECT_ID_PROP,
             },
+            "required": ["project_id"],
         },
     ),
     Tool(
@@ -824,16 +822,14 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
+                "project_id": _PROJECT_ID_PROP,
                 "skill_name": {
                     "type": "string",
                     "description": "The name of the skill to activate (from list_skills).",
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
-                },
+                "project_id": _PROJECT_ID_PROP,
             },
-            "required": ["skill_name"],
+            "required": ["project_id", "skill_name"],
         },
     ),
     Tool(
@@ -859,6 +855,7 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
+                "project_id": _PROJECT_ID_PROP,
                 "flow_id": {
                     "type": "string",
                     "description": "The flow ID to deploy (e.g. 'fastnCustomAuth')",
@@ -873,12 +870,9 @@ TOOLS = [
                     "type": "string",
                     "description": "Optional deployment comment",
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
-                },
+                "project_id": _PROJECT_ID_PROP,
             },
-            "required": ["flow_id"],
+            "required": ["project_id", "flow_id"],
         },
     ),
     # =====================================================================
@@ -896,15 +890,14 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
+                "project_id": _PROJECT_ID_PROP,
                 "status": {
                     "type": "string",
                     "description": 'Filter by status: "active", "paused", "error". Omit for all.',
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
-                },
+                "project_id": _PROJECT_ID_PROP,
             },
+            "required": ["project_id"],
         },
     ),
     Tool(
@@ -916,16 +909,14 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
+                "project_id": _PROJECT_ID_PROP,
                 "flow_id": {
                     "type": "string",
                     "description": "The flow_id from list_flows",
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
-                },
+                "project_id": _PROJECT_ID_PROP,
             },
-            "required": ["flow_id"],
+            "required": ["project_id", "flow_id"],
         },
     ),
     Tool(
@@ -937,6 +928,7 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
+                "project_id": _PROJECT_ID_PROP,
                 "flow_id": {
                     "type": "string",
                     "description": "The flow_id from list_flows",
@@ -945,12 +937,9 @@ TOOLS = [
                     "type": "object",
                     "description": "Optional input parameters for the flow",
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
-                },
+                "project_id": _PROJECT_ID_PROP,
             },
-            "required": ["flow_id"],
+            "required": ["project_id", "flow_id"],
         },
     ),
     Tool(
@@ -959,16 +948,14 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
+                "project_id": _PROJECT_ID_PROP,
                 "flow_id": {
                     "type": "string",
                     "description": "The flow_id from list_flows",
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
-                },
+                "project_id": _PROJECT_ID_PROP,
             },
-            "required": ["flow_id"],
+            "required": ["project_id", "flow_id"],
         },
     ),
     Tool(
@@ -981,16 +968,14 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
+                "project_id": _PROJECT_ID_PROP,
                 "prompt": {
                     "type": "string",
                     "description": "What the user wants to automate, e.g. 'Send a Slack message when a Jira ticket is created'",
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
-                },
+                "project_id": _PROJECT_ID_PROP,
             },
-            "required": ["prompt"],
+            "required": ["project_id", "prompt"],
         },
     ),
     Tool(
@@ -999,6 +984,7 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
+                "project_id": _PROJECT_ID_PROP,
                 "flow_id": {
                     "type": "string",
                     "description": "The flow_id to update",
@@ -1007,12 +993,9 @@ TOOLS = [
                     "type": "string",
                     "description": "Plain English description of what to change",
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
-                },
+                "project_id": _PROJECT_ID_PROP,
             },
-            "required": ["flow_id"],
+            "required": ["project_id", "flow_id"],
         },
     ),
     # =====================================================================
@@ -1029,6 +1012,7 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
+                "project_id": _PROJECT_ID_PROP,
                 "auth_url": {
                     "type": "string",
                     "description": (
@@ -1057,12 +1041,9 @@ TOOLS = [
                         "from the 'sub' claim in the userinfo response."
                     ),
                 },
-                "project_id": {
-                    "type": "string",
-                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
-                },
+                "project_id": _PROJECT_ID_PROP,
             },
-            "required": ["auth_url", "user_token"],
+            "required": ["project_id", "auth_url", "user_token"],
         },
     ),
     Tool(
@@ -1075,13 +1056,11 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
+                "project_id": _PROJECT_ID_PROP,
                 "styles": _THEME_SCHEMA,
-                "project_id": {
-                    "type": "string",
-                    "description": "The project/workspace ID to scope this request. Call list_projects to get available project IDs.",
-                },
+                "project_id": _PROJECT_ID_PROP,
             },
-            "required": ["styles"],
+            "required": ["project_id", "styles"],
         },
     ),
 ]
@@ -1260,7 +1239,7 @@ def _redact(data: dict, *, mask: str = "***") -> dict:
     return {k: mask if k.lower() in _SENSITIVE_KEYS else v for k, v in data.items()}
 
 
-async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
+async def handle_call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolResult:
     """Dispatch a tool call to the appropriate handler."""
     # Log incoming request with headers
     request_headers: dict = {}
@@ -1321,7 +1300,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent]:
 # Tool handlers
 # ---------------------------------------------------------------------------
 
-async def _handle_generate_flow(arguments: dict) -> list[TextContent]:
+async def _handle_generate_flow(arguments: dict) -> list[TextContent] | CallToolResult:
     """Return a popup URL for the interactive flow builder.
 
     The popup handles the multi-turn conversation directly with the
@@ -1374,7 +1353,7 @@ async def _handle_generate_flow(arguments: dict) -> list[TextContent]:
 
     popup_url = f"{server_base.rstrip('/')}/fb/{code}"
 
-    return _success_result({
+    content = _success_result({
         "popup_url": popup_url,
         "session_id": session_id,
         "project_id": project_id,
@@ -1383,6 +1362,10 @@ async def _handle_generate_flow(arguments: dict) -> list[TextContent]:
             f"[Open Flow Builder]({popup_url})"
         ),
     })
+    return CallToolResult(
+        content=content,
+        _meta={"ui": {"resourceUri": popup_url}},
+    )
 
 
 async def _handle_update_flow(arguments: dict) -> list[TextContent]:
@@ -1819,7 +1802,7 @@ def _create_mcp_server(tools: list[Tool], instructions: str = _SERVER_INSTRUCTIO
         return tools
 
     @srv.call_tool()
-    async def _call_tool(name: str, arguments: dict) -> list[TextContent]:
+    async def _call_tool(name: str, arguments: dict) -> list[TextContent] | CallToolResult:
         return await handle_call_tool(name, arguments)
 
     @srv.list_prompts()
@@ -2010,10 +1993,36 @@ def create_starlette_app(
     # Each URL path gets its own Server instance with pre-configured tools.
     from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
-    all_tools = TOOLS
-    fastn_tools = [t for t in TOOLS if t.name in FASTN_TOOL_NAMES]
-    fastn_tools_no_proj = [t for t in TOOLS if t.name in (FASTN_TOOL_NAMES - {"list_projects"})]
-    fastn_tools_no_proj_skill = [t for t in TOOLS if t.name in (FASTN_TOOL_NAMES - {"list_projects", "list_skills"})]
+    def _without_project_id(tool: Tool) -> Tool:
+        """Return tool with project_id stripped from inputSchema (for project-URL endpoints)."""
+        schema = dict(tool.inputSchema)
+        props = {k: v for k, v in schema.get("properties", {}).items() if k != "project_id"}
+        req = [r for r in schema.get("required", []) if r != "project_id"]
+        schema = {**schema, "properties": props}
+        if req:
+            schema["required"] = req
+        elif "required" in schema:
+            del schema["required"]
+        return Tool(name=tool.name, description=tool.description, inputSchema=schema)
+
+    # Patch generate_flow with _meta.ui.resourceUri so MCP clients that
+    # support the Apps feature can embed the flow builder inline.
+    _app_url = f"{server_url.rstrip('/')}/flow-builder"
+    _patched_tools = [
+        Tool(name=t.name, description=t.description, inputSchema=t.inputSchema,
+             _meta={"ui": {"resourceUri": _app_url}})
+        if t.name == "generate_flow" else t
+        for t in TOOLS
+    ]
+
+    all_tools = _patched_tools
+    fastn_tools = [t for t in _patched_tools if t.name in FASTN_TOOL_NAMES]
+    fastn_tools_no_proj = [
+        _without_project_id(t) for t in _patched_tools if t.name in (FASTN_TOOL_NAMES - {"list_projects"})
+    ]
+    fastn_tools_no_proj_skill = [
+        _without_project_id(t) for t in _patched_tools if t.name in (FASTN_TOOL_NAMES - {"list_projects", "list_skills"})
+    ]
 
     server_all = _create_mcp_server(all_tools)
     server_fastn = _create_mcp_server(fastn_tools)
@@ -2163,6 +2172,7 @@ def create_starlette_app(
     routes = list(auth_routes)
     routes.append(Route("/fb/{code}", endpoint=handle_flow_redirect, methods=["GET"]))
     routes.append(Route("/flow-builder.html", endpoint=handle_flow_builder, methods=["GET"]))
+    routes.append(Route("/flow-builder", endpoint=handle_flow_builder, methods=["GET"]))
     routes.append(Route("/", endpoint=handle_root, methods=["GET"]))
     transport_names = []
 
