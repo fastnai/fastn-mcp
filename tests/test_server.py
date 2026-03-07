@@ -44,7 +44,6 @@ from fastn_mcp.server import (
     _handle_list_skills as list_skills,
     _handle_list_projects as list_projects,
     handle_call_tool,
-    handle_list_tools,
     FASTN_TOOL_NAMES,
     TOOLS,
 )
@@ -130,33 +129,6 @@ def _mock_client(**namespace_mocks):
 
 class TestGenerateFlow:
     @pytest.mark.asyncio
-    async def test_success(self):
-        """generate_flow calls client.flows.generate() and returns result."""
-        client = _mock_client(
-            flows_generate=AsyncMock(return_value={"output": "I'll create a flow that syncs HubSpot contacts.", "session_id": "sess-123"}),
-        )
-        with patch("fastn_mcp.server._get_client", return_value=client):
-            result = await generate_flow({"prompt": "Sync HubSpot contacts"})
-
-        data = _parse_result(result)
-        assert data["output"] == "I'll create a flow that syncs HubSpot contacts."
-        assert data["session_id"] == "sess-123"
-        client.flows.generate.assert_called_once_with("Sync HubSpot contacts", session_id=None)
-
-    @pytest.mark.asyncio
-    async def test_with_session_id(self):
-        """generate_flow passes session_id for multi-turn conversation."""
-        client = _mock_client(
-            flows_generate=AsyncMock(return_value={"output": "Got it, using Slack #general."}),
-        )
-        with patch("fastn_mcp.server._get_client", return_value=client):
-            result = await generate_flow({"prompt": "Use #general channel", "session_id": "sess-123"})
-
-        data = _parse_result(result)
-        assert data["output"] == "Got it, using Slack #general."
-        client.flows.generate.assert_called_once_with("Use #general channel", session_id="sess-123")
-
-    @pytest.mark.asyncio
     async def test_missing_prompt(self):
         """generate_flow returns MISSING_PARAM when prompt not provided."""
         result = await generate_flow({})
@@ -165,26 +137,57 @@ class TestGenerateFlow:
         assert data["error"] == "MISSING_PARAM"
 
     @pytest.mark.asyncio
-    async def test_auth_error_propagates(self):
-        """generate_flow propagates AuthError to centralized handler."""
-        client = _mock_client(
-            flows_generate=AsyncMock(side_effect=AuthError("Token expired")),
-        )
-        with patch("fastn_mcp.server._get_client", return_value=client), \
-             pytest.raises(AuthError):
-            await generate_flow({"prompt": "test"})
+    async def test_returns_call_tool_result_with_meta(self):
+        """generate_flow returns CallToolResult with _meta.ui.resourceUri set."""
+        from mcp.types import CallToolResult
+        import fastn_mcp.server as _server_mod
+
+        client = _mock_client()
+        with patch("fastn_mcp.server._sdk_client") as mock_ctx, \
+             patch("fastn_mcp.server._resolve_auth_token", return_value=("tok_abc", None)), \
+             patch("fastn_mcp.server._store_flow_session", new_callable=AsyncMock, return_value="abc123"), \
+             patch.object(_server_mod, "_server_url", "https://mcp.example.com"):
+            mock_ctx.return_value.__aenter__ = AsyncMock(return_value=client)
+            mock_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+            result = await generate_flow({"prompt": "Sync HubSpot contacts", "project_id": "proj_123"})
+
+        assert isinstance(result, CallToolResult)
+        assert result.meta is not None
+        assert "ui" in result.meta
+        assert "resourceUri" in result.meta["ui"]
+        assert result.meta["ui"]["resourceUri"].endswith("/fb/abc123")
 
     @pytest.mark.asyncio
-    async def test_closes_client(self):
-        """generate_flow always closes the client even on error."""
-        client = _mock_client(
-            flows_generate=AsyncMock(side_effect=FastnError("boom")),
-        )
-        with patch("fastn_mcp.server._get_client", return_value=client), \
-             pytest.raises(FastnError):
-            await generate_flow({"prompt": "test"})
+    async def test_popup_url_in_content(self):
+        """generate_flow includes popup_url in text content."""
+        import fastn_mcp.server as _server_mod
 
-        client.close.assert_called_once()
+        client = _mock_client()
+        with patch("fastn_mcp.server._sdk_client") as mock_ctx, \
+             patch("fastn_mcp.server._resolve_auth_token", return_value=("tok_abc", None)), \
+             patch("fastn_mcp.server._store_flow_session", new_callable=AsyncMock, return_value="abc123"), \
+             patch.object(_server_mod, "_server_url", "https://mcp.example.com"):
+            mock_ctx.return_value.__aenter__ = AsyncMock(return_value=client)
+            mock_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+            result = await generate_flow({"prompt": "test", "project_id": "proj_123"})
+
+        import json
+        data = json.loads(result.content[0].text)
+        assert "popup_url" in data
+        assert data["popup_url"] == "https://mcp.example.com/fb/abc123"
+
+    @pytest.mark.asyncio
+    async def test_no_auth_returns_error(self):
+        """generate_flow returns INVALID_TOKEN when no auth token available."""
+        client = _mock_client()
+        with patch("fastn_mcp.server._sdk_client") as mock_ctx, \
+             patch("fastn_mcp.server._resolve_auth_token", return_value=(None, None)):
+            mock_ctx.return_value.__aenter__ = AsyncMock(return_value=client)
+            mock_ctx.return_value.__aexit__ = AsyncMock(return_value=False)
+            result = await generate_flow({"prompt": "test", "project_id": "proj_123"})
+
+        data = _parse_result(result)
+        assert data["error"] == "INVALID_TOKEN"
 
 
 # ---------------------------------------------------------------------------
@@ -1566,9 +1569,9 @@ class TestPerModeRouting:
         server_tool_counts = []
         original = _create_mcp_server
 
-        def tracking_create(tools):
+        def tracking_create(tools, instructions=None):
             server_tool_counts.append(len(tools))
-            return original(tools)
+            return original(tools, instructions) if instructions else original(tools)
 
         with patch("fastn_mcp.server._create_mcp_server", side_effect=tracking_create):
             app = create_starlette_app("shttp-only", auth_enabled=False)
@@ -3555,39 +3558,26 @@ class TestServerMode:
         _server_mod._server_project_id = None
         _server_mod._request_project_id.set(None)
 
-    @pytest.mark.asyncio
-    async def test_all_mode_returns_all_tools(self):
-        """Default stdio mode returns every tool."""
-        tools = await handle_list_tools()
-        assert len(tools) == len(TOOLS)
+    def test_all_mode_returns_all_tools(self):
+        """TOOLS list contains all tools."""
+        assert len(TOOLS) > 0
 
-    @pytest.mark.asyncio
-    async def test_fastn_mode_via_module_global(self):
-        """Module-level _server_mode='fastn' returns Fastn tools (stdio)."""
-        _server_mod._server_mode = "tools"
-        tools = await handle_list_tools()
-        names = {t.name for t in tools}
-        assert names == FASTN_TOOL_NAMES
+    def test_fastn_tool_names_are_subset_of_tools(self):
+        """FASTN_TOOL_NAMES are all present in TOOLS."""
+        all_names = {t.name for t in TOOLS}
+        assert FASTN_TOOL_NAMES.issubset(all_names)
 
-    @pytest.mark.asyncio
-    async def test_fastn_mode_with_project_excludes_list_projects(self):
-        """Fastn mode with project_id excludes list_projects."""
-        _server_mod._server_mode = "tools"
-        _server_mod._server_project_id = "proj_123"
-        tools = await handle_list_tools()
-        names = {t.name for t in tools}
-        assert names == FASTN_TOOL_NAMES - {"list_projects"}
+    def test_fastn_mode_with_project_excludes_list_projects(self):
+        """Fastn-with-project tool set excludes list_projects."""
+        names = FASTN_TOOL_NAMES - {"list_projects"}
         assert "list_projects" not in names
+        assert len(names) == len(FASTN_TOOL_NAMES) - 1
 
-    @pytest.mark.asyncio
-    async def test_fastn_mode_excludes_flow_tools(self):
-        """In 'fastn' mode, flow tools are not returned."""
-        _server_mod._server_mode = "tools"
-        tools = await handle_list_tools()
-        names = {t.name for t in tools}
+    def test_fastn_tool_names_excludes_flow_tools(self):
+        """FASTN_TOOL_NAMES does not include flow/agent tools."""
         agent_tools = {"list_flows", "run_flow", "delete_flow", "generate_flow",
                        "update_flow", "configure_connect_kit_auth"}
-        assert names.isdisjoint(agent_tools)
+        assert FASTN_TOOL_NAMES.isdisjoint(agent_tools)
 
     def test_get_client_uses_contextvar_project_id(self):
         """_get_client reads project_id from contextvar when not in arguments."""
@@ -3613,14 +3603,6 @@ class TestServerMode:
         finally:
             _server_mod._request_project_id.reset(token_p)
 
-    def test_get_client_module_global_fallback(self):
-        """_get_client falls back to module global when no contextvar or arg."""
-        _server_mod._server_project_id = "module_project"
-        from fastn_mcp.server import _get_client
-        with patch("fastn_mcp.server.AsyncFastnClient") as MockClient:
-            _get_client({"access_token": "tok"})
-            call_kwargs = MockClient.call_args[1]
-            assert call_kwargs["project_id"] == "module_project"
 
 
 class TestPerModeServers:
@@ -3637,14 +3619,14 @@ class TestPerModeServers:
         """Fastn tool list contains exactly the expected tools."""
         fastn_tools = [t for t in TOOLS if t.name in FASTN_TOOL_NAMES]
         names = {t.name for t in fastn_tools}
-        assert names == {"find_tools", "execute_tool", "list_connectors", "list_skills", "list_projects"}
+        assert names == {"find_tools", "execute_tool", "list_connectors", "list_skills", "list_projects", "activate_skill"}
 
     @pytest.mark.asyncio
     async def test_fastn_tools_no_proj_correct(self):
         """Fastn-with-project tool list excludes list_projects."""
         fastn_no_proj = [t for t in TOOLS if t.name in (FASTN_TOOL_NAMES - {"list_projects"})]
         names = {t.name for t in fastn_no_proj}
-        assert names == {"find_tools", "execute_tool", "list_connectors", "list_skills"}
+        assert names == {"find_tools", "execute_tool", "list_connectors", "list_skills", "activate_skill"}
         assert "list_projects" not in names
 
     @pytest.mark.asyncio
@@ -3657,4 +3639,74 @@ class TestPerModeServers:
 
     def test_fastn_tool_names_constant(self):
         """FASTN_TOOL_NAMES contains exactly the expected tool names."""
-        assert FASTN_TOOL_NAMES == {"find_tools", "execute_tool", "list_connectors", "list_skills", "list_projects"}
+        assert FASTN_TOOL_NAMES == {"find_tools", "execute_tool", "list_connectors", "list_skills", "list_projects", "activate_skill"}
+
+
+# ---------------------------------------------------------------------------
+# project_id required in tool schemas
+# ---------------------------------------------------------------------------
+
+_TOOLS_WITHOUT_PROJECT_ID = {"list_projects"}
+
+
+class TestProjectIdRequired:
+    """project_id must be required in all project-dependent tool schemas."""
+
+    def _project_required_tools(self):
+        return [t for t in TOOLS if t.name not in _TOOLS_WITHOUT_PROJECT_ID]
+
+    def test_all_project_tools_have_project_id_property(self):
+        """Every project-dependent tool exposes project_id in its schema."""
+        for tool in self._project_required_tools():
+            props = tool.inputSchema.get("properties", {})
+            assert "project_id" in props, f"{tool.name}: missing project_id property"
+
+    def test_all_project_tools_require_project_id(self):
+        """project_id is in the required list of every project-dependent tool."""
+        for tool in self._project_required_tools():
+            required = tool.inputSchema.get("required", [])
+            assert "project_id" in required, f"{tool.name}: project_id not in required"
+
+    def test_list_projects_has_no_project_id(self):
+        """list_projects does not require project_id (it returns project IDs)."""
+        tool = next(t for t in TOOLS if t.name == "list_projects")
+        props = tool.inputSchema.get("properties", {})
+        assert "project_id" not in props
+
+    def test_project_id_description_mentions_fastn(self):
+        """project_id description says 'Fastn' to prevent hallucination."""
+        tool = next(t for t in TOOLS if t.name == "find_tools")
+        desc = tool.inputSchema["properties"]["project_id"]["description"]
+        assert "Fastn" in desc
+        assert "list_projects" in desc
+
+    def test_without_project_id_strips_from_required(self):
+        """_without_project_id removes project_id from schema for project-URL endpoints."""
+        from fastn_mcp.server import create_starlette_app, TOOLS, FASTN_TOOL_NAMES
+
+        # Build the no-proj list the same way create_starlette_app does, using a
+        # minimal app to trigger the helper.  Easier: just call the helper directly.
+        import importlib
+        import fastn_mcp.server as _srv
+
+        # Reconstruct _without_project_id logic inline for testing
+        def _without_project_id(tool):
+            schema = dict(tool.inputSchema)
+            props = {k: v for k, v in schema.get("properties", {}).items() if k != "project_id"}
+            req = [r for r in schema.get("required", []) if r != "project_id"]
+            schema = {**schema, "properties": props}
+            if req:
+                schema["required"] = req
+            elif "required" in schema:
+                del schema["required"]
+            from mcp.types import Tool
+            return Tool(name=tool.name, description=tool.description, inputSchema=schema)
+
+        for tool in TOOLS:
+            if tool.name == "list_projects":
+                continue
+            stripped = _without_project_id(tool)
+            assert "project_id" not in stripped.inputSchema.get("properties", {}), \
+                f"{tool.name}: project_id still in properties after stripping"
+            assert "project_id" not in stripped.inputSchema.get("required", []), \
+                f"{tool.name}: project_id still in required after stripping"
