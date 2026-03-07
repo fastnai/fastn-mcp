@@ -31,7 +31,7 @@ from typing import Any, Dict, Optional
 
 import anyio
 from mcp.server import Server
-from mcp.types import GetPromptResult, Prompt, PromptArgument, PromptMessage, TextContent, Tool
+from mcp.types import GetPromptResult, Icon, Prompt, PromptArgument, PromptMessage, TextContent, Tool
 
 from fastn import (
     AsyncFastnClient,
@@ -133,7 +133,9 @@ _SERVER_INSTRUCTIONS = (
     "then list_skills to load available skills."
 )
 
-server = Server("fastn", instructions=_SERVER_INSTRUCTIONS)
+_FASTN_ICONS = [Icon(src="https://fastnai.github.io/fastn-brand/logos/fastn-icon-rounded.jpg", mimeType="image/jpeg")]
+
+server = Server("fastn", instructions=_SERVER_INSTRUCTIONS, icons=_FASTN_ICONS)
 
 # OAuth provider instance — set when auth is enabled (remote transports)
 _oauth_provider: Optional["FastnOAuthProvider"] = None
@@ -1112,6 +1114,12 @@ async def _list_skills_auto_project() -> list[dict]:
     x-project-id header. Returns [] silently when no project is set rather
     than guessing, which would break when a user adds a second project.
     """
+    project_id = (
+        _resolve_request_headers().get("project_id")
+        or _request_project_id.get()
+    )
+    if not project_id:
+        return []
     try:
         async with _sdk_client({}) as client:
             return await client.skills.list()
@@ -1123,8 +1131,8 @@ async def handle_list_prompts() -> list[Prompt]:
     """Return static prompts + dynamic skill catalog (agentskills.io Tier 1).
 
     Skills are fetched live on every list_prompts call. Project is resolved
-    from the URL path (/shttp/tools/{project_id}), x-project-id header, or
-    auto-detected when the user has exactly one project.
+    from the URL path (/shttp/tools/{project_id}) or x-project-id header.
+    Returns only static prompts when no project is set.
     """
     prompts: list[Prompt] = list(PROMPTS)
 
@@ -1747,7 +1755,7 @@ def _create_mcp_server(tools: list[Tool], instructions: str = _SERVER_INSTRUCTIO
     MCP SDK), so auth token resolution works regardless of which Server
     instance is processing the request.
     """
-    srv = Server("fastn", instructions=instructions)
+    srv = Server("fastn", instructions=instructions, icons=_FASTN_ICONS)
 
     @srv.list_tools()
     async def _list_tools() -> list[Tool]:
