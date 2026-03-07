@@ -20,7 +20,7 @@ classifiers = [
 
 dependencies = [
     "mcp>=1.2.0",
-    "fastn-ai>=0.3.6",
+    "fastn-ai>=0.3.7",
 ]
 
 [project.optional-dependencies]
