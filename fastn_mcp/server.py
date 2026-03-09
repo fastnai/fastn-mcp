@@ -740,7 +740,6 @@ TOOLS = [
                     "items": {"type": "string"},
                     "description": "Narrow results to connector domains (e.g. ['payments', 'crm', 'messaging', 'database', 'email', 'project-management'])",
                 },
-                "project_id": _PROJECT_ID_PROP,
             },
             "required": ["project_id", "prompt"],
         },
@@ -768,7 +767,6 @@ TOOLS = [
                     "type": "string",
                     "description": "Connection ID when a connector has multiple connections (optional)",
                 },
-                "project_id": _PROJECT_ID_PROP,
             },
             "required": ["project_id", "action_id", "parameters"],
         },
@@ -789,7 +787,6 @@ TOOLS = [
                     "type": "string",
                     "description": "Filter by connector name (e.g. 'slack', 'jira')",
                 },
-                "project_id": _PROJECT_ID_PROP,
             },
             "required": ["project_id"],
         },
@@ -827,7 +824,6 @@ TOOLS = [
                     "type": "string",
                     "description": "The name of the skill to activate (from list_skills).",
                 },
-                "project_id": _PROJECT_ID_PROP,
             },
             "required": ["project_id", "skill_name"],
         },
@@ -870,7 +866,6 @@ TOOLS = [
                     "type": "string",
                     "description": "Optional deployment comment",
                 },
-                "project_id": _PROJECT_ID_PROP,
             },
             "required": ["project_id", "flow_id"],
         },
@@ -895,7 +890,6 @@ TOOLS = [
                     "type": "string",
                     "description": 'Filter by status: "active", "paused", "error". Omit for all.',
                 },
-                "project_id": _PROJECT_ID_PROP,
             },
             "required": ["project_id"],
         },
@@ -914,7 +908,6 @@ TOOLS = [
                     "type": "string",
                     "description": "The flow_id from list_flows",
                 },
-                "project_id": _PROJECT_ID_PROP,
             },
             "required": ["project_id", "flow_id"],
         },
@@ -937,7 +930,6 @@ TOOLS = [
                     "type": "object",
                     "description": "Optional input parameters for the flow",
                 },
-                "project_id": _PROJECT_ID_PROP,
             },
             "required": ["project_id", "flow_id"],
         },
@@ -953,7 +945,6 @@ TOOLS = [
                     "type": "string",
                     "description": "The flow_id from list_flows",
                 },
-                "project_id": _PROJECT_ID_PROP,
             },
             "required": ["project_id", "flow_id"],
         },
@@ -973,7 +964,6 @@ TOOLS = [
                     "type": "string",
                     "description": "What the user wants to automate, e.g. 'Send a Slack message when a Jira ticket is created'",
                 },
-                "project_id": _PROJECT_ID_PROP,
             },
             "required": ["project_id", "prompt"],
         },
@@ -984,7 +974,6 @@ TOOLS = [
         inputSchema={
             "type": "object",
             "properties": {
-                "project_id": _PROJECT_ID_PROP,
                 "flow_id": {
                     "type": "string",
                     "description": "The flow_id to update",
@@ -993,9 +982,8 @@ TOOLS = [
                     "type": "string",
                     "description": "Plain English description of what to change",
                 },
-                "project_id": _PROJECT_ID_PROP,
             },
-            "required": ["project_id", "flow_id"],
+            "required": ["flow_id"],
         },
     ),
     # =====================================================================
@@ -1041,7 +1029,6 @@ TOOLS = [
                         "from the 'sub' claim in the userinfo response."
                     ),
                 },
-                "project_id": _PROJECT_ID_PROP,
             },
             "required": ["project_id", "auth_url", "user_token"],
         },
@@ -1058,7 +1045,6 @@ TOOLS = [
             "properties": {
                 "project_id": _PROJECT_ID_PROP,
                 "styles": _THEME_SCHEMA,
-                "project_id": _PROJECT_ID_PROP,
             },
             "required": ["project_id", "styles"],
         },
@@ -2003,7 +1989,8 @@ def create_starlette_app(
             schema["required"] = req
         elif "required" in schema:
             del schema["required"]
-        return Tool(name=tool.name, description=tool.description, inputSchema=schema)
+        return Tool(name=tool.name, description=tool.description, inputSchema=schema,
+                    _meta=tool.meta)
 
     # Patch generate_flow with _meta.ui.resourceUri so MCP clients that
     # support the Apps feature can embed the flow builder inline.
@@ -2129,6 +2116,16 @@ def create_starlette_app(
             "modes": modes,
         })
 
+    # ── Favicon ────────────────────────────────────────────────────────
+    _favicon_path = os.path.join(os.path.dirname(__file__), "static", "favicon.svg")
+
+    async def handle_favicon(request: Request):
+        from starlette.responses import Response
+        if os.path.isfile(_favicon_path):
+            with open(_favicon_path) as f:
+                return Response(f.read(), media_type="image/svg+xml")
+        return Response(status_code=404)
+
     # ── Flow builder popup ─────────────────────────────────────────────
     # Serve the single-file popup HTML.
     # 1) Package static dir (Docker / pip install)
@@ -2170,6 +2167,8 @@ def create_starlette_app(
         return RedirectResponse(url=f"/flow-builder.html?{query}", status_code=302)
 
     routes = list(auth_routes)
+    routes.append(Route("/favicon.ico", endpoint=handle_favicon, methods=["GET"]))
+    routes.append(Route("/favicon.svg", endpoint=handle_favicon, methods=["GET"]))
     routes.append(Route("/fb/{code}", endpoint=handle_flow_redirect, methods=["GET"]))
     routes.append(Route("/flow-builder.html", endpoint=handle_flow_builder, methods=["GET"]))
     routes.append(Route("/flow-builder", endpoint=handle_flow_builder, methods=["GET"]))
