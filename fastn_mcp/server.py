@@ -31,7 +31,7 @@ from typing import Any, Dict, Optional
 
 import anyio
 from mcp.server import Server
-from mcp.types import CallToolResult, GetPromptResult, Prompt, PromptArgument, PromptMessage, TextContent, Tool
+from mcp.types import CallToolResult, GetPromptResult, Icon, Prompt, PromptArgument, PromptMessage, TextContent, Tool
 
 from fastn import (
     AsyncFastnClient,
@@ -133,7 +133,9 @@ _SERVER_INSTRUCTIONS = (
     "then list_skills to load available skills."
 )
 
-server = Server("fastn", instructions=_SERVER_INSTRUCTIONS)
+_FASTN_ICONS = [Icon(src="https://fastnai.github.io/fastn-brand/logos/fastn-icon-rounded.jpg", mimeType="image/jpeg")]
+
+server = Server("fastn", instructions=_SERVER_INSTRUCTIONS, icons=_FASTN_ICONS)
 
 # OAuth provider instance — set when auth is enabled (remote transports)
 _oauth_provider: Optional["FastnOAuthProvider"] = None
@@ -1779,7 +1781,7 @@ def _create_mcp_server(tools: list[Tool], instructions: str = _SERVER_INSTRUCTIO
     MCP SDK), so auth token resolution works regardless of which Server
     instance is processing the request.
     """
-    srv = Server("fastn", instructions=instructions)
+    srv = Server("fastn", instructions=instructions, icons=_FASTN_ICONS)
 
     @srv.list_tools()
     async def _list_tools() -> list[Tool]:
@@ -1854,11 +1856,7 @@ def create_starlette_app(
             RevocationOptions,
         )
 
-        clients_file = os.path.join(
-            os.environ.get("FASTN_DATA_DIR", os.path.expanduser("~/.fastn-mcp")),
-            "oauth_clients.json",
-        )
-        provider = FastnOAuthProvider(server_url=server_url, clients_file=clients_file)
+        provider = FastnOAuthProvider(server_url=server_url)
         _oauth_provider = provider
 
         token_verifier = ProviderTokenVerifier(provider)
