@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/fastn-ai-fastn-mcp-badge.png)](https://mseep.ai/app/fastn-ai-fastn-mcp)
+
 # Fastn MCP Server
 
 **Give your AI agents and apps secure, governed access to your customers' tools and systems through one multi-tenant MCP endpoint.**
